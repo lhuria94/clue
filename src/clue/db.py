@@ -1,0 +1,479 @@
+"""SQLite storage with schema migrations for extracted telemetry data."""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import os
+import sqlite3
+from pathlib import Path
+
+from .models import ConversationTurn, Prompt, ScoringData, Session, TokenUsage, TrendData
+
+DEFAULT_DB_PATH = Path.home() / ".claude" / "usage.db"
+
+SCHEMA_VERSION = 2
+
+MIGRATIONS: dict[int, str] = {
+    1: """
+    CREATE TABLE IF NOT EXISTS prompts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        date TEXT NOT NULL,
+        hour INTEGER NOT NULL,
+        day_of_week INTEGER NOT NULL,
+        project TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        text TEXT NOT NULL,
+        char_length INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS turns (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        project TEXT NOT NULL,
+        role TEXT NOT NULL,
+        timestamp TEXT,
+        model TEXT,
+        input_tokens INTEGER DEFAULT 0,
+        output_tokens INTEGER DEFAULT 0,
+        cache_creation_tokens INTEGER DEFAULT 0,
+        cache_read_tokens INTEGER DEFAULT 0,
+        tool_name TEXT,
+        text_length INTEGER DEFAULT 0,
+        is_subagent INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+        session_id TEXT PRIMARY KEY,
+        project TEXT NOT NULL,
+        started_at TEXT,
+        prompt_count INTEGER DEFAULT 0,
+        total_input_tokens INTEGER DEFAULT 0,
+        total_output_tokens INTEGER DEFAULT 0,
+        total_cache_creation_tokens INTEGER DEFAULT 0,
+        total_cache_read_tokens INTEGER DEFAULT 0,
+        models_used TEXT,
+        tools_used TEXT,
+        turn_count INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS watermarks (
+        source TEXT PRIMARY KEY,
+        last_modified REAL NOT NULL,
+        last_line_count INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER PRIMARY KEY
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_prompts_date ON prompts(date);
+    CREATE INDEX IF NOT EXISTS idx_prompts_project ON prompts(project);
+    CREATE INDEX IF NOT EXISTS idx_prompts_session ON prompts(session_id);
+    CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id);
+    CREATE INDEX IF NOT EXISTS idx_turns_project ON turns(project);
+    CREATE INDEX IF NOT EXISTS idx_turns_model ON turns(model);
+    CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
+
+    INSERT INTO schema_version (version) VALUES (1);
+    """,
+    2: """
+    ALTER TABLE turns ADD COLUMN cwd TEXT;
+    ALTER TABLE turns ADD COLUMN git_branch TEXT;
+    ALTER TABLE turns ADD COLUMN claude_version TEXT;
+    ALTER TABLE turns ADD COLUMN stop_reason TEXT;
+
+    CREATE INDEX IF NOT EXISTS idx_turns_git_branch ON turns(git_branch);
+
+    UPDATE schema_version SET version = 2;
+    """,
+}
+
+
+def _get_schema_version(conn: sqlite3.Connection) -> int:
+    """Get current schema version, 0 if fresh database."""
+    try:
+        cur = conn.execute("SELECT MAX(version) FROM schema_version")
+        row = cur.fetchone()
+        return row[0] if row and row[0] else 0
+    except sqlite3.OperationalError:
+        return 0
+
+
+def init_db(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
+    """Create or open the database and run pending migrations."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    current = _get_schema_version(conn)
+    for version in sorted(MIGRATIONS.keys()):
+        if version > current:
+            conn.executescript(MIGRATIONS[version])
+
+    # Restrict DB file to owner-only access
+    with contextlib.suppress(OSError):
+        os.chmod(db_path, 0o600)
+
+    return conn
+
+
+def clear_db(conn: sqlite3.Connection) -> None:
+    """Drop all data (for full re-extract). Preserves schema."""
+    conn.executescript("""
+        DELETE FROM prompts;
+        DELETE FROM turns;
+        DELETE FROM sessions;
+        DELETE FROM watermarks;
+    """)
+    conn.commit()
+
+
+def get_watermark(conn: sqlite3.Connection, source: str) -> tuple[float, int]:
+    """Get last-modified time and line count for a source file."""
+    cur = conn.execute(
+        "SELECT last_modified, last_line_count FROM watermarks WHERE source = ?",
+        (source,),
+    )
+    row = cur.fetchone()
+    return (row[0], row[1]) if row else (0.0, 0)
+
+
+def set_watermark(conn: sqlite3.Connection, source: str, mtime: float, line_count: int) -> None:
+    """Update watermark for a source file."""
+    conn.execute(
+        "INSERT OR REPLACE INTO watermarks (source, last_modified, last_line_count)"
+        " VALUES (?, ?, ?)",
+        (source, mtime, line_count),
+    )
+    conn.commit()
+
+
+def insert_prompts(conn: sqlite3.Connection, prompts: list[Prompt]) -> int:
+    """Insert prompt records. Returns count inserted."""
+    if not prompts:
+        return 0
+    rows = [
+        (
+            p.timestamp.isoformat(),
+            p.timestamp.strftime("%Y-%m-%d"),
+            p.timestamp.hour,
+            p.timestamp.weekday(),
+            p.project,
+            p.session_id,
+            p.text,
+            p.char_length,
+        )
+        for p in prompts
+    ]
+    conn.executemany(
+        "INSERT INTO prompts"
+        " (timestamp, date, hour, day_of_week, project, session_id, text, char_length)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+def insert_turns(conn: sqlite3.Connection, turns: list[ConversationTurn]) -> int:
+    """Insert conversation turn records."""
+    if not turns:
+        return 0
+    rows = [
+        (
+            t.session_id,
+            t.project,
+            t.role,
+            t.timestamp,
+            t.model,
+            t.usage.input_tokens,
+            t.usage.output_tokens,
+            t.usage.cache_creation_tokens,
+            t.usage.cache_read_tokens,
+            t.tool_name,
+            t.text_length,
+            1 if t.is_subagent else 0,
+            t.cwd,
+            t.git_branch,
+            t.claude_version,
+            t.stop_reason,
+        )
+        for t in turns
+    ]
+    conn.executemany(
+        "INSERT INTO turns (session_id, project, role, timestamp, model, "
+        "input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, "
+        "tool_name, text_length, is_subagent, cwd, git_branch, claude_version, stop_reason) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+def delete_turns_by_sessions(conn: sqlite3.Connection, session_ids: set[str]) -> int:
+    """Delete turns for specific sessions (used before re-inserting on incremental runs)."""
+    if not session_ids:
+        return 0
+    deleted = 0
+    for sid in session_ids:
+        cur = conn.execute("DELETE FROM turns WHERE session_id = ?", (sid,))
+        deleted += cur.rowcount
+    conn.commit()
+    return deleted
+
+
+def insert_sessions(conn: sqlite3.Connection, sessions: list[Session]) -> int:
+    """Insert session summary records."""
+    if not sessions:
+        return 0
+    rows = [
+        (
+            s.session_id,
+            s.project,
+            s.started_at.isoformat() if s.started_at else None,
+            s.prompt_count,
+            s.total_input_tokens,
+            s.total_output_tokens,
+            s.total_cache_creation_tokens,
+            s.total_cache_read_tokens,
+            json.dumps(sorted(s.models_used)),
+            json.dumps(s.tools_used),
+            s.turn_count,
+        )
+        for s in sessions
+    ]
+    conn.executemany(
+        "INSERT OR REPLACE INTO sessions (session_id, project, started_at, prompt_count, "
+        "total_input_tokens, total_output_tokens, total_cache_creation_tokens, "
+        "total_cache_read_tokens, models_used, tools_used, turn_count) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+# --- Query helpers ---
+
+
+_ALLOWED_TABLES = {"prompts", "turns", "sessions"}
+
+
+def _where(table: str, project: str | None) -> tuple[str, tuple]:
+    """Build a parameterised WHERE clause scoped to a project."""
+    if table not in _ALLOWED_TABLES:
+        raise ValueError(f"Invalid table: {table!r}")
+    if project:
+        return f"{table}.project = ?", (project,)
+    return "1=1", ()
+
+
+def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> ScoringData:
+    """Query all data needed by the scoring engine."""
+    cur = conn.cursor()
+
+    # Prompt lengths
+    clause, params = _where("prompts", project)
+    cur.execute(f"SELECT char_length FROM prompts WHERE {clause}", params)
+    prompt_lengths = [r[0] for r in cur.fetchall()]
+
+    # Token totals + session count
+    clause, params = _where("turns", project)
+    cur.execute(
+        f"""
+        SELECT SUM(input_tokens), SUM(output_tokens),
+               COUNT(DISTINCT session_id)
+        FROM turns WHERE {clause}
+    """,
+        params,
+    )
+    row = cur.fetchone()
+    total_input = row[0] or 0
+    total_output = row[1] or 0
+    session_count = row[2] or 0
+
+    # Cache tokens
+    cur.execute(
+        f"""
+        SELECT SUM(cache_creation_tokens), SUM(cache_read_tokens)
+        FROM turns WHERE {clause}
+    """,
+        params,
+    )
+    row = cur.fetchone()
+    cache_create = row[0] or 0
+    cache_read = row[1] or 0
+
+    # Tool counts
+    cur.execute(
+        f"""
+        SELECT tool_name, COUNT(*) as uses
+        FROM turns WHERE tool_name IS NOT NULL AND {clause}
+        GROUP BY tool_name ORDER BY uses DESC
+    """,
+        params,
+    )
+    tool_counts = {r[0]: r[1] for r in cur.fetchall()}
+
+    # Prompts per session
+    clause, params = _where("prompts", project)
+    cur.execute(
+        f"""
+        SELECT session_id, COUNT(*) as prompts
+        FROM prompts WHERE {clause}
+        GROUP BY session_id
+    """,
+        params,
+    )
+    prompts_per_session = [r[1] for r in cur.fetchall()]
+
+    # Model usage
+    clause, params = _where("turns", project)
+    cur.execute(
+        f"""
+        SELECT model, COUNT(*) as calls, SUM(output_tokens) as output_t
+        FROM turns WHERE model IS NOT NULL AND {clause}
+        GROUP BY model
+    """,
+        params,
+    )
+    model_calls: dict[str, int] = {}
+    model_output_tokens: dict[str, int] = {}
+    for r in cur.fetchall():
+        model_calls[r[0]] = r[1]
+        model_output_tokens[r[0]] = r[2] or 0
+
+    # Prompt texts for semantic analysis
+    clause, params = _where("prompts", project)
+    cur.execute(f"SELECT text FROM prompts WHERE {clause}", params)
+    prompt_texts = [r[0] for r in cur.fetchall()]
+
+    # Turns per session (total turns including user + assistant)
+    clause, params = _where("turns", project)
+    cur.execute(
+        f"""
+        SELECT session_id, COUNT(*) as turn_count
+        FROM turns WHERE {clause}
+        GROUP BY session_id
+    """,
+        params,
+    )
+    turns_per_session = [r[1] for r in cur.fetchall()]
+
+    # Unique tools per session (tool diversity within sessions)
+    cur.execute(
+        f"""
+        SELECT session_id, COUNT(DISTINCT tool_name) as tool_diversity
+        FROM turns WHERE tool_name IS NOT NULL AND {clause}
+        GROUP BY session_id
+    """,
+        params,
+    )
+    unique_tools_per_session = [r[1] for r in cur.fetchall()]
+
+    return ScoringData(
+        prompt_lengths=prompt_lengths,
+        total_input_tokens=total_input,
+        total_output_tokens=total_output,
+        session_count=session_count,
+        cache_creation_tokens=cache_create,
+        cache_read_tokens=cache_read,
+        tool_counts=tool_counts,
+        prompts_per_session=prompts_per_session,
+        model_calls=model_calls,
+        model_output_tokens=model_output_tokens,
+        prompt_texts=prompt_texts,
+        turns_per_session=turns_per_session,
+        unique_tools_per_session=unique_tools_per_session,
+    )
+
+
+def query_trend_data(conn: sqlite3.Connection) -> TrendData:
+    """Query data needed for trend computation."""
+    cur = conn.cursor()
+
+    cur.execute("SELECT MAX(date) FROM prompts")
+    latest = cur.fetchone()[0]
+    if not latest:
+        return TrendData()
+
+    cur.execute(
+        "SELECT AVG(char_length) FROM prompts WHERE date > date(?, '-7 days')",
+        (latest,),
+    )
+    recent_avg = cur.fetchone()[0] or 0
+
+    cur.execute(
+        "SELECT AVG(char_length) FROM prompts "
+        "WHERE date <= date(?, '-7 days') AND date > date(?, '-14 days')",
+        (latest, latest),
+    )
+    prior_avg = cur.fetchone()[0] or 0
+
+    return TrendData(
+        recent_avg_length=recent_avg,
+        prior_avg_length=prior_avg,
+        has_data=True,
+    )
+
+
+def query_all_projects(conn: sqlite3.Connection) -> list[str]:
+    """Get all distinct project names."""
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT DISTINCT project FROM prompts
+        UNION
+        SELECT DISTINCT project FROM turns
+    """)
+    return sorted(r[0] for r in cur.fetchall())
+
+
+def query_project_stats(conn: sqlite3.Connection, project: str) -> tuple[int, int, int]:
+    """Get (prompt_count, token_count, session_count) for a project."""
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) FROM prompts WHERE project = ?", (project,))
+    prompt_count = cur.fetchone()[0]
+
+    cur.execute(
+        "SELECT SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens) "
+        "FROM turns WHERE project = ?",
+        (project,),
+    )
+    token_count = cur.fetchone()[0] or 0
+
+    cur.execute("SELECT COUNT(DISTINCT session_id) FROM prompts WHERE project = ?", (project,))
+    session_count = cur.fetchone()[0]
+
+    return prompt_count, token_count, session_count
+
+
+def query_all_turns(conn: sqlite3.Connection) -> list[ConversationTurn]:
+    """Query all turns from the database as ConversationTurn objects."""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT session_id, project, role, model, tool_name, "
+        "input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, "
+        "timestamp FROM turns"
+    )
+    return [
+        ConversationTurn(
+            session_id=r[0],
+            project=r[1],
+            role=r[2],
+            model=r[3],
+            tool_name=r[4],
+            usage=TokenUsage(
+                input_tokens=r[5],
+                output_tokens=r[6],
+                cache_creation_tokens=r[7],
+                cache_read_tokens=r[8],
+            ),
+            timestamp=r[9],
+        )
+        for r in cur.fetchall()
+    ]

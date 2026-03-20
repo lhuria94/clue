@@ -1,0 +1,109 @@
+[project]
+name = "clue"
+version = "0.2.0"
+description = "Clue — AI efficiency scoring and telemetry dashboard for Claude Code"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Love Huria" }]
+dependencies = ["streamlit>=1.45", "plotly>=6.0"]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0", "pytest-cov>=6.0"]
+dev = ["import-linter>=2.0"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=6.0",
+    "import-linter>=2.0",
+    "ruff>=0.11",
+    "nox>=2025.2.9",
+]
+
+[project.scripts]
+clue = "clue.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/clue"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "--cov=clue --cov-report=term-missing --cov-fail-under=87"
+
+[tool.coverage.run]
+source = ["src/clue"]
+branch = true
+omit = ["src/clue/dashboard/app.py", "src/clue/__main__.py"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 87
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["clue"]
+
+[tool.importlinter]
+root_packages = ["clue"]
+
+[[tool.importlinter.contracts]]
+name = "models has no internal imports"
+type = "forbidden"
+source_modules = ["clue.models"]
+forbidden_modules = ["clue.db", "clue.extractor", "clue.scorer", "clue.export", "clue.cli"]
+
+[[tool.importlinter.contracts]]
+name = "scorer does not depend on infrastructure"
+type = "forbidden"
+source_modules = ["clue.scorer"]
+forbidden_modules = ["clue.db", "clue.export", "clue.cli", "clue.extractor"]
+
+[[tool.importlinter.contracts]]
+name = "db does not depend on export or cli"
+type = "forbidden"
+source_modules = ["clue.db"]
+forbidden_modules = ["clue.export", "clue.cli", "clue.extractor"]
+
+[[tool.importlinter.contracts]]
+name = "extractor does not depend on export or cli"
+type = "forbidden"
+source_modules = ["clue.extractor"]
+forbidden_modules = ["clue.export", "clue.cli", "clue.scorer"]
+
+[[tool.importlinter.contracts]]
+name = "dashboard does not depend on cli"
+type = "forbidden"
+source_modules = ["clue.dashboard"]
+forbidden_modules = ["clue.cli"]
+ignore_imports = [
+    "clue.pipeline -> clue.extractor",
+    "clue.export -> clue.scorer",
+]
+
+[[tool.importlinter.contracts]]
+name = "pipeline does not depend on cli or dashboard"
+type = "forbidden"
+source_modules = ["clue.pipeline"]
+forbidden_modules = ["clue.cli", "clue.dashboard", "clue.export", "clue.scorer"]
+
+[[tool.importlinter.contracts]]
+name = "git_utils has no internal imports"
+type = "forbidden"
+source_modules = ["clue.git_utils"]
+forbidden_modules = [
+    "clue.db", "clue.extractor", "clue.scorer", "clue.export",
+    "clue.cli", "clue.models", "clue.pipeline", "clue.dashboard",
+]

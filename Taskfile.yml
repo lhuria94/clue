@@ -1,0 +1,178 @@
+# ─────────────────────────────────────────────────────────────
+# Clue Taskfile — AI efficiency scoring for Claude Code
+#
+# Prerequisites: mise + uv (see .mise.toml)
+# Quick start:   mise install && uv sync && task check
+# Legacy start:  ./setup.sh (works without mise/uv)
+# ─────────────────────────────────────────────────────────────
+version: "3"
+
+vars:
+  VENV_DIR: .venv
+  PYTHON: "{{.VENV_DIR}}/bin/python"
+  PYTEST: "{{.VENV_DIR}}/bin/pytest"
+  NOX: "{{.VENV_DIR}}/bin/nox"
+  RUFF: "{{.VENV_DIR}}/bin/ruff"
+  CLAUDE_DIR: "{{.HOME}}/.claude"
+  DB_PATH: "{{.HOME}}/.claude/usage.db"
+
+tasks:
+
+  # ── Bootstrap ────────────────────────────────────────────────
+  default:
+    desc: "Show available tasks"
+    cmds:
+      - task --list-all
+
+  setup:
+    desc: "One-command setup: sync + test + extract + hook + score + doctor"
+    cmds:
+      - task: sync
+      - task: test
+      - cmd: "{{.PYTHON}} -m clue setup"
+      - task: doctor
+    sources:
+      - pyproject.toml
+
+  # ── Environment ──────────────────────────────────────────────
+  sync:
+    desc: "Sync venv with all dependencies via uv"
+    cmds:
+      - uv sync --group dev
+    sources:
+      - pyproject.toml
+      - uv.lock
+
+  # Legacy fallback for environments without uv
+  venv:
+    desc: "Create Python virtual environment (legacy)"
+    status:
+      - test -d {{.VENV_DIR}}
+    cmds:
+      - python3 -m venv {{.VENV_DIR}}
+
+  install:
+    desc: "Install via pip (legacy — prefer 'task sync')"
+    deps: [venv]
+    sources:
+      - pyproject.toml
+    cmds:
+      - "{{.PYTHON}} -m pip install --quiet -e '.[test,dev]'"
+
+  doctor:
+    desc: "Validate all prerequisites and tech stack"
+    cmds:
+      - "{{.PYTHON}} -m clue doctor"
+
+  # ── Quality gates ──────────────────────────────────────────
+  check:
+    desc: "Run all quality gates: lint + test + architecture"
+    cmds:
+      - task: lint
+      - task: test
+      - task: lint-imports
+
+  lint:
+    desc: "Lint with ruff"
+    cmds:
+      - "{{.RUFF}} check src tests"
+
+  format:
+    desc: "Format code with ruff"
+    cmds:
+      - "{{.RUFF}} format src tests"
+
+  format-check:
+    desc: "Check formatting without modifying files"
+    cmds:
+      - "{{.RUFF}} format --check src tests"
+
+  lint-imports:
+    desc: "Check architecture boundaries with import-linter"
+    cmds:
+      - "{{.VENV_DIR}}/bin/lint-imports"
+
+  # ── Testing ────────────────────────────────────────────────
+  test:
+    desc: "Run full test suite with coverage ratchet (87%)"
+    cmds:
+      - "{{.PYTEST}} tests/ -v"
+
+  test-quick:
+    desc: "Run tests without verbose output"
+    cmds:
+      - "{{.PYTEST}} tests/ -q"
+
+  test-unit:
+    desc: "Run unit tests only"
+    cmds:
+      - "{{.PYTEST}} tests/test_extractor.py tests/test_db.py tests/test_scorer.py tests/test_export.py -v"
+
+  test-integration:
+    desc: "Run integration + security tests"
+    cmds:
+      - "{{.PYTEST}} tests/test_integration.py tests/test_cli.py -v"
+
+  # ── Nox (multi-Python, CI) ────────────────────────────────
+  nox:
+    desc: "Run all nox sessions (lint + test + architecture)"
+    cmds:
+      - "{{.NOX}}"
+
+  nox-test:
+    desc: "Run nox test session across Python versions"
+    cmds:
+      - "{{.NOX}} -s test"
+
+  # ── Core operations ──────────────────────────────────────────
+  extract:
+    desc: "Extract data from ~/.claude/ into SQLite"
+    cmds:
+      - "{{.PYTHON}} -m clue extract"
+
+  extract-incremental:
+    desc: "Extract only new data since last run"
+    cmds:
+      - "{{.PYTHON}} -m clue extract --incremental"
+
+  score:
+    desc: "Print AI efficiency score to terminal"
+    cmds:
+      - "{{.PYTHON}} -m clue score"
+
+  start:
+    desc: "Extract data and serve the interactive dashboard (PORT=8484)"
+    aliases: [dashboard]
+    vars:
+      PORT: '{{.PORT | default "8484"}}'
+    cmds:
+      - "{{.PYTHON}} -m clue dashboard --port {{.PORT}}"
+
+  stop:
+    desc: "Stop the running dashboard"
+    cmds:
+      - cmd: "lsof -ti :{{.PORT}} | xargs kill -9 2>/dev/null && echo 'Dashboard stopped.' || echo 'No dashboard running.'"
+        platforms: [darwin, linux]
+      - cmd: 'powershell -Command "Get-NetTCPConnection -LocalPort {{.PORT}} -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }; Write-Host ''Dashboard stopped.''"'
+        platforms: [windows]
+    vars:
+      PORT: '{{.PORT | default "8484"}}'
+
+  # ── Team operations ──────────────────────────────────────────
+  export:
+    desc: "Export JSON for team sharing (prompt text scrubbed)"
+    cmds:
+      - '{{.PYTHON}} -m clue export --scrub --user-label "$(whoami)" -o "$(whoami)-clue.json"'
+
+  merge:
+    desc: "Merge team exports (pass FILES='a.json b.json')"
+    cmds:
+      - "{{.PYTHON}} -m clue merge {{.CLI_ARGS}} -o team-dashboard.json"
+
+  # ── Housekeeping ──────────────────────────────────────────
+  clean:
+    desc: "Remove generated files (venv, db, cache)"
+    cmds:
+      - rm -rf {{.VENV_DIR}} .pytest_cache __pycache__ src/clue/__pycache__ .nox
+      - rm -f {{.DB_PATH}}
+      - echo "Cleaned."

@@ -1,0 +1,36 @@
+# Python
+**/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Virtual environments
+.venv/
+.nox/
+
+# Test / lint artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+.import_linter_cache/
+test-results/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project-specific
+*.db
+data.json
+.env
+.mise.local.toml

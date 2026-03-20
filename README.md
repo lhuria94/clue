@@ -1,0 +1,334 @@
+# Clue
+
+**C**laude **L**ine **U**sage **E**fficiency — AI efficiency scoring and telemetry dashboard for [Claude Code](https://claude.com/claude-code).
+
+Get scored 0-100 on how efficiently you use AI. Track tokens, costs, tool usage across every project. Receive actionable recommendations. Share anonymised metrics with your team.
+
+Python 3.10+. SQLite for storage. Streamlit + Plotly dashboard.
+
+---
+
+## Quick Start
+
+### Option A: mise + uv (recommended for developers)
+
+```bash
+git clone <repo-url> && cd clue
+mise install          # installs Python 3.14 + uv
+uv sync --group dev   # reproducible install from lockfile
+task setup            # test + extract + hook + doctor
+```
+
+Requires [mise](https://mise.jdx.dev) (`curl https://mise.jdx.dev/install.sh | sh`).
+
+### Option B: macOS / Linux (no prerequisites beyond Python)
+
+```bash
+git clone <repo-url> && cd clue && ./setup.sh
+```
+
+### Option C: Windows (PowerShell)
+
+```powershell
+# If needed first: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+git clone <repo-url>; cd clue; .\setup.ps1
+```
+
+### What setup does
+
+| Step | What happens | Automated? |
+|------|-------------|------------|
+| 1 | Detects Python 3.10+ (or tells you exactly how to install it) | Yes |
+| 2 | Creates `.venv/` virtual environment | Yes |
+| 3 | Installs `clue` + dev tools into venv | Yes |
+| 4 | Offers to install [Taskfile](https://taskfile.dev) for shortcuts (optional) | Prompted |
+| 5 | Runs 120-test suite to verify everything works | Yes |
+| 6 | Extracts all your Claude Code data from `~/.claude/` | Yes |
+| 7 | Installs PostStop hook for continuous auto-capture | Yes |
+| 8 | Prints your AI Efficiency Score with recommendations | Yes |
+| 9 | Runs `doctor` to validate all prerequisites | Yes |
+
+---
+
+## Prerequisites
+
+| Prerequisite | Required? | How to install | Verified by |
+|---|---|---|---|
+| **Python 3.10+** | Required | `brew install python@3.12` (macOS), `sudo apt install python3.12 python3.12-venv` (Ubuntu), `winget install Python.Python.3.12` (Windows) | `setup.sh`, `doctor` |
+| **Python venv** | Required | Included with Python on macOS/Windows. Ubuntu: `sudo apt install python3-venv` | `setup.sh`, `doctor` |
+| **Python sqlite3** | Required | Included in Python stdlib on all platforms | `doctor` |
+| **Claude Code** | Required | `npm install -g @anthropic-ai/claude-code` — use it at least once | `doctor` |
+| **Git** | Optional | For cloning. Or download the zip | `doctor` |
+| **mise** | Optional | `curl https://mise.jdx.dev/install.sh \| sh` — manages Python + uv versions | `.mise.toml` |
+| **uv** | Optional | Installed by mise, or `curl -LsSf https://astral.sh/uv/install.sh \| sh` | `.mise.toml` |
+| **Taskfile** | Optional | `brew install go-task` (macOS), `winget install Task.Task` (Windows), [taskfile.dev](https://taskfile.dev/installation/) | `doctor` |
+
+`python -m clue doctor` checks all of these and tells you exactly what's missing and how to fix it.
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Why this choice |
+|---|---|---|
+| **Language** | Python 3.10+ | Available on every OS. No compile step. Stdlib-only means zero `pip install` failures |
+| **Storage** | SQLite (WAL mode) | Stdlib. Single-file. No server. Concurrent reads during hook writes. Scales to 500K+ rows locally |
+| **Schema** | Versioned migrations | `db.py` runs numbered migrations on startup. Add columns without breaking existing databases |
+| **Watermarks** | SQLite table | File mtimes tracked per-source. Incremental extraction only re-parses changed files |
+| **Dashboard** | Streamlit + Plotly | Interactive, auto-refreshing, live SQLite queries, native dark/light theme |
+| **Scoring** | Python weighted composite | 6 dimensions, 0-100 per dimension, weighted average. Deterministic, no ML |
+| **Hook** | Claude Code PostStop | Fires after every session. Runs incremental extract in background. Zero config after setup |
+| **Team sharing** | JSON export + merge | Each user exports locally. Merge command combines. No shared infrastructure |
+| **Privacy** | `--scrub` flag | Strips all prompt text from exports. Aggregated metrics only. No absolute paths in dashboard |
+| **Tests** | pytest | 149 tests across unit, integration, security, and CLI layers |
+| **Task runner** | Taskfile (optional) | Shortcuts for common operations. Falls back to `python -m clue` if not installed |
+| **Cross-platform** | `pathlib` + platform detection | Windows backslash path encoding, PowerShell setup script, platform-aware doctor |
+
+---
+
+## Commands
+
+With Taskfile:
+
+```bash
+task setup              # Full bootstrap (first time)
+task start              # Open interactive dashboard (PORT=8486 task start)
+task stop               # Stop the running dashboard
+task score              # Print efficiency score
+task test               # Run test suite
+task export             # Export for team (scrubbed)
+task doctor             # Validate prerequisites
+task extract-incremental # Extract only new data
+task                    # List all tasks
+```
+
+Without Taskfile:
+
+```bash
+.venv/bin/python -m clue setup
+.venv/bin/python -m clue dashboard
+.venv/bin/python -m clue score
+.venv/bin/python -m clue doctor
+.venv/bin/python -m clue extract --incremental
+.venv/bin/python -m clue export --scrub --user-label "alice"
+.venv/bin/python -m clue merge alice.json bob.json -o team.json
+```
+
+---
+
+## AI Efficiency Score
+
+Every user gets scored **0-100** across 7 weighted dimensions:
+
+| Dimension | Weight | What it measures | Score drivers |
+|---|---|---|---|
+| **Prompt Quality** | 20% | Are prompts specific and context-rich? | Length distribution, slash commands, file references, confirmation rate |
+| **Token Efficiency** | 15% | Value per token spent? | Output/input ratio, tokens/session, prompt-to-turn leverage |
+| **Cache Utilisation** | 10% | Benefiting from prompt caching? | Cache hit rate, CLAUDE.md usage, session continuity |
+| **Tool Mastery** | 15% | Using tools effectively? | Diversity, Read→Edit workflow, per-session tool mix, antipatterns |
+| **Session Discipline** | 10% | Focused, structured sessions? | Depth range (5-40), tool workflow structure |
+| **Cost Awareness** | 10% | Right model for the task? | Model mix across Opus/Sonnet/Haiku tiers |
+| **Iteration Efficiency** | 20% | Converging on results quickly? | Correction rate, AI leverage, structured workflows |
+
+### Example output
+
+```
+AI Efficiency Score: 76/100  [B]  -16.6%
+
+Dimension Scores:
+Prompt Quality            50   D   20%   Avg 59 chars, 38% in ideal range, 12% with file refs
+Token Efficiency          85   A   15%   Output/input ratio: 2.10, prompt/turn ratio: 0.35
+Cache Utilisation        100  A+   10%   Cache hit rate: 95.3%
+Tool Mastery              90   A   15%   20 tools used, avg 4.2 tools/session
+Session Discipline        46   D   10%   41% sessions <3 prompts, 60% structured
+Cost Awareness            81   B   10%   Sonnet 93%, Opus 3%, Haiku 4%
+Iteration Efficiency      72   B   20%   4% corrections, 2.8x AI leverage
+
+Recommendations:
+1. Batch related questions into single sessions for better context.
+2. Start fresh sessions for new tasks — long sessions degrade quality.
+3. Include context in prompts: what file, what behaviour, what you expect.
+```
+
+---
+
+## Dashboard
+
+Streamlit + Plotly dashboard served at `http://127.0.0.1:8484`:
+
+### Score Overview
+
+Your AI Efficiency Score front and centre — a radial gauge with grade, trend indicator, and the top actionable recommendations. KPI cards show totals at a glance.
+
+![Score Overview](docs/screenshots/01-score-overview.png)
+
+All 7 scoring dimensions with individual grades, weights, and explanations so you know exactly where to improve.
+
+![Dimensions](docs/screenshots/02-dimensions.png)
+
+### Activity
+
+Daily prompts, sessions, token consumption (input/output/cache), and prompt length distribution over time. Filter by date range to spot trends.
+
+![Activity Tab](docs/screenshots/tab-activity.png)
+
+### Projects
+
+Per-project breakdown of prompts and tokens. See which repos consume the most AI resources.
+
+![Projects Tab](docs/screenshots/tab-projects.png)
+
+### Tools
+
+Top 15 tools by usage count with daily tool usage trends. Stop reason analysis shows why sessions end (tool_use, end_turn, stop_sequence). Agentic usage breakdown shows sub-agent turns and cost vs main conversation.
+
+![Tools Tab](docs/screenshots/tab-tools.png)
+
+### Cost
+
+Model distribution doughnut chart with daily cost breakdown by model. Track spend across Opus, Sonnet, and Haiku.
+
+![Cost Tab](docs/screenshots/tab-cost.png)
+
+### Patterns
+
+Hour-of-day and day-of-week distributions reveal your productivity rhythms. Git branch activity shows where work happens.
+
+![Patterns Tab](docs/screenshots/tab-patterns.png)
+
+### Journey
+
+Developer journey view — usage streak, week-over-week comparison, GitHub-style activity heatmap, session depth distribution, iteration efficiency trend, weekly summaries, and recent session timeline.
+
+![Journey Tab](docs/screenshots/tab-journey.png)
+
+### Insights
+
+Advanced analytics — correction cost (tokens wasted on rework), prompt pattern analysis, session outcome classification (productive/exploratory/abandoned via git correlation), time-to-value histogram, and team percentile benchmarks (when merged JSON available).
+
+---
+
+## Team Usage
+
+```bash
+# Each team member (on their machine):
+./setup.sh
+.venv/bin/python -m clue export --scrub --user-label "alice" -o alice.json
+
+# Team lead merges:
+.venv/bin/python -m clue merge alice.json bob.json carol.json -o team.json
+
+# View merged dashboard:
+# Copy team.json as data.json alongside index.html, or serve via dashboard command
+```
+
+**Privacy guarantees:**
+- All data stays local — nothing sent anywhere
+- `--scrub` removes all prompt text from exports
+- Dashboard JSON contains aggregated metrics only
+- No absolute file paths in export
+- No conversation content in export
+
+---
+
+## Continuous Capture
+
+`setup` installs a PostStop hook in `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/path/to/.venv/bin/python -m clue extract --incremental"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+After every Claude Code session ends, incremental extraction runs automatically. Your data stays current without manual intervention.
+
+---
+
+## Architecture
+
+```
+src/clue/
+├── __init__.py         # Package version
+├── __main__.py         # python -m clue entry
+├── cli.py              # 7 commands: doctor, setup, extract, export, merge, score, dashboard
+├── models.py           # Dataclasses: Prompt, TokenUsage, ConversationTurn, Session, EfficiencyScore
+├── extractor.py        # Parses ~/.claude/ with incremental watermarks, cross-platform paths
+├── db.py               # SQLite + WAL + versioned migrations + watermark table
+├── scorer.py           # 7-dimension scoring engine with semantic analysis + recommendations
+├── export.py           # SQL queries → JSON with scores, scrub mode, git correlation
+├── git_utils.py        # Git log queries for session-outcome correlation (subprocess)
+├── pipeline.py         # Extraction pipeline shared by CLI and dashboard
+└── dashboard/
+    └── app.py          # Streamlit dashboard with 7 tabs + live SQLite queries
+```
+
+Data flow:
+```
+~/.claude/ files
+    ↓ extractor (watermarks for incremental)
+SQLite (WAL mode, versioned schema)
+    ↓ scorer (7 dimensions, weighted)
+    ↓ export (SQL → JSON, optional scrub + git correlation)
+    ↓ git_utils (session → commit correlation via local git)
+Streamlit + Plotly dashboard (7 tabs, live queries, auto-refresh)
+```
+
+---
+
+## Data Sources
+
+| Source | Location | Fields extracted |
+|---|---|---|
+| Prompt history | `~/.claude/history.jsonl` | timestamp, project, sessionId, text, char_length |
+| Conversations | `~/.claude/projects/**/*.jsonl` | model, token usage (input/output/cache), tools, cwd, gitBranch, version, stop_reason |
+| Subagent logs | `~/.claude/projects/**/subagents/*.jsonl` | Same as conversations, flagged `is_subagent` |
+| Session metadata | `~/.claude/sessions/*.json` | pid, sessionId, cwd, startedAt |
+
+---
+
+## Tests
+
+```bash
+task test           # or: .venv/bin/pytest tests/ -v
+task test-unit      # Unit tests only
+task test-integration # Integration + security tests
+```
+
+**149 tests** across 4 layers:
+
+| Layer | Files | What it covers |
+|---|---|---|
+| **Unit** | `test_extractor.py`, `test_db.py`, `test_scorer.py`, `test_export.py` | Each module in isolation with mock data |
+| **Integration** | `test_integration.py` | Full pipeline: mock files → extract → SQLite → export → JSON |
+| **Security** | `test_integration.py::TestSecurityConstraints` | Prompt text never leaks, no absolute paths in exports |
+| **CLI** | `test_cli.py` | All 7 commands including doctor, setup, merge, incremental extract |
+
+---
+
+## Cost Estimation
+
+Approximate pricing based on public Anthropic rates:
+
+| Model | Input | Output | Cache Write | Cache Read |
+|---|---|---|---|---|
+| Opus 4.6 | $15/M | $75/M | $18.75/M | $1.50/M |
+| Sonnet 4.6 | $3/M | $15/M | $3.75/M | $0.30/M |
+| Haiku 4.5 | $0.80/M | $4/M | $1.00/M | $0.08/M |
+
+---
+
+## License
+
+MIT
