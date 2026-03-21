@@ -299,57 +299,59 @@ selected_range = st.radio(
 )
 DAYS = range_options[selected_range]
 
+# Pre-compute period-filtered KPIs (used by hero and KPI row)
+_usage_f = filter_by_range(DATA.get("daily_usage", []), DAYS)
+_cost_f = filter_by_range(DATA.get("daily_cost", []), DAYS)
+_hero_cost = sum(r.get("c", 0) for r in _cost_f)
+_hero_sessions = sum(r["s"] for r in _usage_f)
+
 st.divider()
 
-# ── Score Hero ───────────────────────────────────────────────────
-score_col, dims_col, recs_col = st.columns([1, 1.5, 1.5])
+# ── Cost Hero ────────────────────────────────────────────────────
+# Lead with the numbers that drive behaviour change
+cost_hero_col, score_hero_col, recs_col = st.columns([1.2, 1.3, 1.5])
 
-with score_col:
+with cost_hero_col:
+    corr_cost = DATA.get("correction_cost", {})
+    wasted = corr_cost.get("cost", 0)
+    waste_pct = corr_cost.get("pct", 0)
+    cost_per_session = _hero_cost / max(_hero_sessions, 1)
+
+    period_label = selected_range if selected_range != "All time" else "Total"
+    st.markdown(
+        f'<div style="text-align:center">'
+        f'<div style="font-size:2.2rem;font-weight:800;color:{COLORS["accent"]}">'
+        f'${_hero_cost:,.2f}</div>'
+        f'<div style="font-size:0.85rem;opacity:0.7">'
+        f'Estimated Cost ({html.escape(period_label)})</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    hero_m1, hero_m2 = st.columns(2)
+    with hero_m1:
+        cps_label = f"Cost/Session ({period_label})"
+        st.metric(
+            cps_label,
+            f"${cost_per_session:.2f}",
+            help="Average estimated cost per session (one task/feature/bug)",
+        )
+    with hero_m2:
+        st.metric(
+            "Correction Waste (all time)",
+            f"${wasted:.2f}",
+            delta=f"{waste_pct:.1f}% of spend",
+            delta_color="inverse",
+            help="All-time estimated cost of AI responses following correction prompts",
+        )
+
+with score_hero_col:
     score = eff["overall"]
     grade = eff["grade"]
     color = score_color(score)
     trend = eff.get("trend", "stable")
     delta = eff.get("trend_delta", 0)
 
-    # Gauge chart
-    fig_gauge = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=score,
-        number=dict(font=dict(size=48, color=color), suffix=""),
-        gauge=dict(
-            axis=dict(range=[0, 100], tickwidth=0, tickcolor="rgba(0,0,0,0)", dtick=25),
-            bar=dict(color=color, thickness=0.75),
-            bgcolor="rgba(128,128,128,0.1)",
-            borderwidth=0,
-            steps=[
-                dict(range=[0, 40], color="rgba(251,113,133,0.06)"),
-                dict(range=[40, 70], color="rgba(251,191,36,0.06)"),
-                dict(range=[70, 100], color="rgba(52,211,153,0.06)"),
-            ],
-        ),
-    ))
-    fig_gauge.update_layout(
-        height=200,
-        margin=dict(l=20, r=20, t=20, b=10),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig_gauge, width="stretch", key="gauge", config=PLOTLY_CONFIG)
-
-    trend_icon = {"improving": "↑", "declining": "↓"}.get(trend, "→")
-    trend_color = {"improving": COLORS["green"], "declining": COLORS["rose"]}.get(
-        trend, COLORS["amber"]
-    )
-    st.markdown(
-        f'<div style="text-align:center;margin-top:-0.5rem">'
-        f'<span style="font-size:1.5rem;font-weight:800">{html.escape(grade)}</span>'
-        f' <span style="color:{trend_color};font-size:0.85rem">'
-        f'{trend_icon} {abs(delta):.1f}% {html.escape(trend)}</span></div>',
-        unsafe_allow_html=True,
-    )
-
-with dims_col:
-    st.markdown("**Score Dimensions**")
+    st.markdown("**Efficiency Score** (all time)")
     for dim in eff["dimensions"]:
         pct = dim["score"]
         col = score_color(pct)
@@ -363,6 +365,18 @@ with dims_col:
             f' style="width:{pct}%;background:{col}"></div></div>'
         )
         st.markdown(bar_html, unsafe_allow_html=True)
+
+    trend_icon = {"improving": "↑", "declining": "↓"}.get(trend, "→")
+    trend_color = {"improving": COLORS["green"], "declining": COLORS["rose"]}.get(
+        trend, COLORS["amber"]
+    )
+    st.markdown(
+        f'<div style="text-align:right;font-size:0.82rem;margin-top:0.3rem">'
+        f'<span style="font-weight:800">{score:.0f}/100 {html.escape(grade)}</span>'
+        f' <span style="color:{trend_color}">'
+        f'{trend_icon} {abs(delta):.1f}%</span></div>',
+        unsafe_allow_html=True,
+    )
 
 with recs_col:
     st.markdown("**Top Recommendations**")
@@ -382,7 +396,7 @@ cost_f = filter_by_range(DATA.get("daily_cost", []), DAYS)
 prompts_f = filter_by_range(DATA.get("prompt_lengths", []), DAYS)
 
 kpi_prompts = sum(r["p"] for r in usage_f)
-kpi_sessions = len({r["d"] for r in usage_f if r["s"] > 0})
+kpi_sessions = sum(r["s"] for r in usage_f)
 kpi_input = sum(r.get("i", 0) for r in tokens_f)
 kpi_output = sum(r.get("o", 0) for r in tokens_f)
 kpi_cache_w = sum(r.get("cw", 0) for r in tokens_f)
@@ -394,14 +408,16 @@ kpi_cache_pct = round(kpi_cache_r / kpi_cache_total * 100, 1) if kpi_cache_total
 kpi_avg_prompt = round(sum(r["l"] for r in prompts_f) / len(prompts_f), 0) if prompts_f else 0
 kpi_projects = len({r["pj"] for r in filter_by_range(DATA.get("daily_project", []), DAYS)})
 
-k1, k2, k3, k4, k5, k6 = st.columns(6)
+k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("Prompts", f"{kpi_prompts:,}")
 tok_help = f"In: {fmt_tokens(kpi_input)} / Out: {fmt_tokens(kpi_output)}"
 k2.metric("Tokens", fmt_tokens(kpi_tokens), help=tok_help)
-k3.metric("Est. Cost", f"${kpi_cost:,.2f}")
-k4.metric("Cache Hit", f"{kpi_cache_pct}%")
-k5.metric("Avg Prompt", f"{int(kpi_avg_prompt):,} chars")
-k6.metric("Projects", str(kpi_projects))
+k3.metric(
+    "Cache Hit Rate", f"{kpi_cache_pct}%",
+    help="% of input tokens served from cache. Higher = less redundant data sent",
+)
+k4.metric("Avg Prompt Length", f"{int(kpi_avg_prompt):,} chars")
+k5.metric("Projects", str(kpi_projects))
 
 # ── Project Scores ───────────────────────────────────────────────
 project_scores = DATA.get("project_scores", [])
@@ -683,7 +699,7 @@ with tab_tools:
     # Agentic usage
     daily_agent = filter_by_range(DATA.get("daily_agentic", []), DAYS)
     if daily_agent:
-        st.markdown("**Agentic vs Main Turns**")
+        st.markdown("**Agentic vs Main AI Responses**")
         col_ag1, col_ag2 = st.columns(2)
         with col_ag1:
             fig_ag = go.Figure()
@@ -848,7 +864,7 @@ with tab_patterns:
         for b in branches:
             branch_data.append({
                 "Branch": b["branch"],
-                "Turns": b["turns"],
+                "AI Responses": b["turns"],
                 "Output Tokens": fmt_tokens(b.get("output_tokens", 0)),
             })
         st.dataframe(branch_data, width="stretch", hide_index=True)
@@ -1031,7 +1047,7 @@ with tab_journey:
                 "Project": html.escape(s["project"]),
                 "Started": s.get("started", "—") or "—",
                 "Prompts": s["prompts"],
-                "Turns": s["turns"],
+                "AI Responses": s["turns"],
                 "Tokens": fmt_tokens(s["tokens"]),
                 "Top Tools": tools_str,
             })
@@ -1047,7 +1063,7 @@ with tab_insights:
             st.metric(
                 "Correction Cost",
                 f'${corr_cost.get("cost", 0):.2f}',
-                help="Estimated tokens spent on turns following correction prompts",
+                help="Estimated tokens spent on AI responses following correction prompts",
             )
         with col_i2:
             st.metric(
@@ -1059,28 +1075,307 @@ with tab_insights:
             st.metric(
                 "Sessions with Corrections",
                 str(corr_cost.get("sessions", 0)),
+                help=(
+                    "A correction is a prompt like 'no', 'wrong', 'try again', 'undo' — "
+                    "indicates the previous AI response wasn't what you wanted"
+                ),
             )
 
-    # Prompt pattern stats
-    pattern_stats = DATA.get("prompt_pattern_stats", [])
-    if pattern_stats:
-        st.markdown("**Prompt Pattern Analysis** (factual distributions)")
-        st.caption("How different prompt types correlate with session token usage.")
-        pattern_table = []
-        for ps in pattern_stats:
-            pattern_label = {
-                "has_file_ref": "Contains file references",
-                "has_slash_cmd": "Slash commands (/test, /review)",
-                "short_prompt": "Short prompts (<50 chars)",
-                "long_prompt": "Detailed prompts (>200 chars)",
-                "all": "All prompts (baseline)",
-            }.get(ps["pattern"], ps["pattern"])
-            pattern_table.append({
-                "Pattern": pattern_label,
-                "Count": ps["count"],
-                "Avg Session Tokens": fmt_tokens(int(ps["avg_session_tokens"])),
+    # ── Weekly Digest ──
+    weekly_digest = DATA.get("weekly_digest", {})
+    if weekly_digest.get("has_data"):
+        st.markdown("---")
+        tw_label = weekly_digest.get("this_week_label", "This week")
+        lw_label = weekly_digest.get("last_week_label", "Last week")
+        st.markdown(f"**Weekly Digest** ({tw_label} vs {lw_label})")
+        tw = weekly_digest["this_week"]
+        lw = weekly_digest["last_week"]
+        dg1, dg2, dg3, dg4, dg5 = st.columns(5)
+        with dg1:
+            delta_prompts = None
+            if lw["prompts"] > 0:
+                delta_prompts = f'{((tw["prompts"] - lw["prompts"]) / lw["prompts"] * 100):+.0f}%'
+            st.metric("Prompts", tw["prompts"], delta=delta_prompts)
+        with dg2:
+            delta_sessions = None
+            if lw["sessions"] > 0:
+                pct = (tw["sessions"] - lw["sessions"]) / lw["sessions"] * 100
+                delta_sessions = f"{pct:+.0f}%"
+            st.metric("Sessions", tw["sessions"], delta=delta_sessions)
+        with dg3:
+            delta_len = None
+            if lw["avg_prompt_length"] > 0:
+                d = tw["avg_prompt_length"] - lw["avg_prompt_length"]
+                delta_len = f"{d:+.0f} chars"
+            st.metric(
+                "Avg Prompt Length",
+                f'{tw["avg_prompt_length"]:.0f} chars',
+                delta=delta_len,
+            )
+        with dg4:
+            tw_cr = tw.get("correction_rate", 0)
+            lw_cr = lw.get("correction_rate", 0)
+            delta_cr = None
+            if lw_cr > 0:
+                delta_cr = f"{tw_cr - lw_cr:+.1f}%"
+            st.metric(
+                "Correction Rate",
+                f"{tw_cr:.1f}%",
+                delta=delta_cr,
+                delta_color="inverse",
+                help="Lower is better — fewer corrections means clearer prompts",
+            )
+        with dg5:
+            delta_cost = None
+            if lw["cost"] > 0:
+                delta_cost = f'${tw["cost"] - lw["cost"]:+.2f}'
+            st.metric(
+                "Cost",
+                f'${tw["cost"]:.2f}',
+                delta=delta_cost,
+                delta_color="inverse",
+            )
+
+    # ── Session Insights: Best vs Worst + Project Coaching ──
+    session_insights = DATA.get("session_insights", {})
+    best_worst = session_insights.get("best_worst")
+    if best_worst:
+        st.markdown("---")
+        st.markdown("**Best vs Worst Sessions** (top 10% vs bottom 10% by session cost)")
+        bw_col1, bw_col2 = st.columns(2)
+        top = best_worst["top10"]
+        bot = best_worst["bottom10"]
+        with bw_col1:
+            st.markdown(f"**Cheapest Sessions** ({top['count']} sessions)")
+            bw_metrics = {
+                "Avg Prompt Length": f'{top["avg_prompt_length"]:.0f} chars',
+                "Avg AI Responses": f'{top["avg_turns"]:.1f}',
+                "Tool Diversity": f'{top["avg_tool_diversity"]:.1f}',
+                "Correction Rate": f'{top["correction_rate"]:.1f}%',
+                "Read-before-Edit": f'{top["read_before_edit_pct"]:.0f}%',
+                "Avg Cost": f'${top["avg_cost"]:.2f}',
+            }
+            for label, val in bw_metrics.items():
+                st.markdown(
+                    f"<small>{label}: **{html.escape(val)}**</small>",
+                    unsafe_allow_html=True,
+                )
+        with bw_col2:
+            st.markdown(f"**Costliest Sessions** ({bot['count']} sessions)")
+            bw_metrics_b = {
+                "Avg Prompt Length": f'{bot["avg_prompt_length"]:.0f} chars',
+                "Avg AI Responses": f'{bot["avg_turns"]:.1f}',
+                "Tool Diversity": f'{bot["avg_tool_diversity"]:.1f}',
+                "Correction Rate": f'{bot["correction_rate"]:.1f}%',
+                "Read-before-Edit": f'{bot["read_before_edit_pct"]:.0f}%',
+                "Avg Cost": f'${bot["avg_cost"]:.2f}',
+            }
+            for label, val in bw_metrics_b.items():
+                st.markdown(
+                    f"<small>{label}: **{html.escape(val)}**</small>",
+                    unsafe_allow_html=True,
+                )
+
+        # "What's working" callout — name the practices that separate best from worst
+        practices = []
+        if top["avg_prompt_length"] > bot["avg_prompt_length"] * 1.3:
+            practices.append(
+                f'longer prompts ({top["avg_prompt_length"]:.0f} vs '
+                f'{bot["avg_prompt_length"]:.0f} chars)'
+            )
+        if top["read_before_edit_pct"] > bot["read_before_edit_pct"] + 15:
+            practices.append(
+                f'reading before editing ({top["read_before_edit_pct"]:.0f}% vs '
+                f'{bot["read_before_edit_pct"]:.0f}%)'
+            )
+        if top["avg_tool_diversity"] > bot["avg_tool_diversity"] * 1.2:
+            practices.append(
+                f'using more tools ({top["avg_tool_diversity"]:.1f} vs '
+                f'{bot["avg_tool_diversity"]:.1f})'
+            )
+        if bot["correction_rate"] > top["correction_rate"] * 1.5:
+            practices.append(
+                f'lower correction rate ({top["correction_rate"]:.1f}% vs '
+                f'{bot["correction_rate"]:.1f}%)'
+            )
+        if practices:
+            st.info(
+                f"**What your cheapest sessions have in common:** {', '.join(practices)}. "
+                "These patterns correlate with lower cost — but note that some cheap sessions "
+                "may simply be shorter or less complex tasks."
+            )
+
+    project_coaching = session_insights.get("project_coaching", [])
+    if project_coaching:
+        st.markdown("---")
+        st.markdown("**Per-Project Coaching**")
+        st.caption("Projects ranked by cost per session — most expensive first.")
+        coaching_table = []
+        for pc in project_coaching:
+            coaching_table.append({
+                "Project": pc["project"],
+                "Sessions": pc["sessions"],
+                "Prompts": pc["prompts"],
+                "Correction Rate": f'{pc["correction_rate"]:.1f}%',
+                "Cost/Session": f'${pc["cost_per_session"]:.2f}',
+                "Tokens/Session": fmt_tokens(int(pc["tokens_per_session"])),
+                "Avg Prompt Length": f'{pc["avg_prompt_length"]:.0f} chars',
             })
-        st.dataframe(pattern_table, width="stretch", hide_index=True)
+        st.dataframe(coaching_table, width="stretch", hide_index=True)
+
+        # Inline coaching: flag projects with outlier correction rates or costs
+        if len(project_coaching) >= 2:
+            avg_cr = sum(p["correction_rate"] for p in project_coaching) / len(project_coaching)
+            avg_cost = sum(p["cost_per_session"] for p in project_coaching) / len(project_coaching)
+            alerts = []
+            for pc in project_coaching:
+                proj = pc["project"]
+                if pc["correction_rate"] > avg_cr * 1.5 and pc["sessions"] >= 3:
+                    alerts.append(
+                        f"**{html.escape(proj)}** has {pc['correction_rate']:.1f}% "
+                        f"correction rate (avg {avg_cr:.1f}%)"
+                    )
+                if pc["cost_per_session"] > avg_cost * 2 and pc["sessions"] >= 3:
+                    alerts.append(
+                        f"**{html.escape(proj)}** costs ${pc['cost_per_session']:.2f}/session "
+                        f"(avg ${avg_cost:.2f})"
+                    )
+            if alerts:
+                st.warning("  \n".join(alerts[:3]))
+
+    # ── Prompt Learning ──
+    prompt_learning = DATA.get("prompt_learning", [])
+    if prompt_learning:
+        st.markdown("---")
+        st.markdown("**Prompt Learning** (which prompt styles lead to corrections?)")
+        st.caption(
+            "For each prompt pattern, shows how often the NEXT prompt "
+            "in the same session is a correction."
+        )
+        pl_col1, pl_col2 = st.columns([2, 3])
+        with pl_col1:
+            pl_table = []
+            for pl in prompt_learning:
+                pl_table.append({
+                    "Pattern": pl["pattern"],
+                    "Count": pl["count"],
+                    "Correction Rate": f'{pl["correction_rate"]:.1f}%',
+                })
+            st.dataframe(pl_table, width="stretch", hide_index=True)
+        with pl_col2:
+            pl_avg_cr = (
+                sum(pl["correction_rate"] * pl["count"] for pl in prompt_learning)
+                / max(sum(pl["count"] for pl in prompt_learning), 1)
+            )
+            fig_pl = go.Figure(go.Bar(
+                x=[pl["pattern"] for pl in prompt_learning],
+                y=[pl["correction_rate"] for pl in prompt_learning],
+                marker_color=[
+                    COLORS["green"] if pl["correction_rate"] < pl_avg_cr
+                    else COLORS["amber"] if pl["correction_rate"] < pl_avg_cr * 1.5
+                    else COLORS["rose"]
+                    for pl in prompt_learning
+                ],
+                marker=dict(cornerradius=4),
+                text=[f'{pl["correction_rate"]:.0f}%' for pl in prompt_learning],
+                textposition="outside",
+            ))
+            fig_pl.update_layout(
+                height=300,
+                yaxis_title="Correction Rate %",
+                xaxis_tickangle=-20,
+                **PLOTLY_LAYOUT,
+            )
+            st.plotly_chart(fig_pl, width="stretch", key="prompt_learning", config=PLOTLY_CONFIG)
+
+    # ── Expensive Sessions Drill-Down ──
+    expensive_sessions = DATA.get("expensive_sessions", [])
+    if expensive_sessions:
+        st.markdown("---")
+        st.markdown("**Most Expensive Sessions** (top 20 by estimated cost)")
+        st.caption("Your costliest individual sessions — review what drove the spend.")
+        exp_table = []
+        for es in expensive_sessions:
+            exp_table.append({
+                "Project": es["project"],
+                "Cost": f'${es["cost"]:.2f}',
+                "Prompts": es["prompts"],
+                "Corrections": es["corrections"],
+                "Correction %": f'{es["correction_rate"]:.1f}%',
+                "AI Responses": es["ai_responses"],
+                "Tools Used": es["tools"],
+                "Model": es["model"],
+            })
+        st.dataframe(exp_table, width="stretch", hide_index=True)
+
+    # ── Time-of-Day Analysis ──
+    hourly_cr = DATA.get("hourly_correction_rates", [])
+    if len(hourly_cr) >= 4:
+        st.markdown("---")
+        st.markdown("**Correction Rate by Hour** (when are your prompts least effective?)")
+        fig_hcr = go.Figure()
+        hours = [f'{h["hour"]:02d}:00' for h in hourly_cr]
+        rates = [h["correction_rate"] for h in hourly_cr]
+        counts = [h["prompts"] for h in hourly_cr]
+        avg_rate = sum(r * c for r, c in zip(rates, counts, strict=True)) / max(sum(counts), 1)
+        fig_hcr.add_trace(go.Bar(
+            x=hours, y=rates,
+            marker_color=[
+                COLORS["rose"] if r > avg_rate * 1.5
+                else COLORS["amber"] if r > avg_rate
+                else COLORS["green"]
+                for r in rates
+            ],
+            marker=dict(cornerradius=4),
+            text=[f"{r:.0f}%" for r in rates],
+            textposition="outside",
+            hovertext=[f"{c} prompts" for c in counts],
+        ))
+        fig_hcr.add_hline(
+            y=avg_rate, line_dash="dash", line_color=COLORS["accent"],
+            annotation_text=f"avg {avg_rate:.1f}%",
+        )
+        fig_hcr.update_layout(
+            height=300,
+            yaxis_title="Correction Rate %",
+            xaxis_title="Hour of Day",
+            **PLOTLY_LAYOUT,
+        )
+        st.plotly_chart(fig_hcr, width="stretch", key="hourly_cr", config=PLOTLY_CONFIG)
+
+        # Surface the worst hours
+        bad_hours = [
+            h for h in hourly_cr
+            if h["correction_rate"] > avg_rate * 1.5 and h["prompts"] >= 5
+        ]
+        if bad_hours:
+            worst = sorted(bad_hours, key=lambda x: x["correction_rate"], reverse=True)[:2]
+            hour_strs = [f'{h["hour"]:02d}:00 ({h["correction_rate"]:.0f}%)' for h in worst]
+            st.info(
+                f"Your correction rate spikes at {', '.join(hour_strs)}. "
+                f"Average is {avg_rate:.1f}%. Consider if fatigue or context-switching "
+                "affects prompt quality at these times."
+            )
+
+    # ── Branch Coaching ──
+    branch_coaching = DATA.get("branch_coaching", [])
+    if branch_coaching:
+        st.markdown("---")
+        st.markdown("**Branch-Level Efficiency**")
+        st.caption(
+            "Correction rate and estimated cost per branch. "
+            "Cost is based on output tokens only — actual cost may be higher."
+        )
+        br_table = []
+        for bc in branch_coaching:
+            br_table.append({
+                "Branch": bc["branch"],
+                "Sessions": bc["sessions"],
+                "Prompts": bc["prompts"],
+                "Correction %": f'{bc["correction_rate"]:.1f}%',
+                "Est. Cost": f'${bc["est_cost"]:.2f}',
+            })
+        st.dataframe(br_table, width="stretch", hide_index=True)
 
     # Session outcomes (git-correlated)
     outcome_counts = DATA.get("outcome_counts")

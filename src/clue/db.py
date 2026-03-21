@@ -5,10 +5,31 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
 
-from .models import ConversationTurn, Prompt, ScoringData, Session, TokenUsage, TrendData
+from .models import (
+    ConversationTurn,
+    Prompt,
+    ScoringData,
+    Session,
+    SessionMetrics,
+    TokenUsage,
+    TrendData,
+)
+
+_CORRECTION_RE = re.compile(
+    r"(?i)^(?:no[,.\s]|not that|wrong|try again|undo|revert|actually[,\s]|I meant|"
+    r"that's not|don'?t |stop |wait[,.\s]|instead[,.\s]|I said )",
+)
+_FILE_REF_RE = re.compile(
+    r"(?:"
+    r"[\w./\\-]+\.(?:py|js|ts|tsx|jsx|java|kt|go|rs|rb|php|c|cpp|h|cs|swift|r|scala|lua|pl|ex|exs|hs|elm|vue|svelte|css|scss|less|html|xml|yml|yaml|toml|json|md|sh|bash|zsh|sql|tf|hcl|proto|graphql|dockerfile)"
+    r"|line\s+\d+"
+    r"|:\d+(?::\d+)?"
+    r")"
+)
 
 DEFAULT_DB_PATH = Path.home() / ".claude" / "usage.db"
 
@@ -375,6 +396,120 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
     )
     unique_tools_per_session = [r[1] for r in cur.fetchall()]
 
+    # --- Per-session comparative metrics ---
+    # Session-level: tools, tokens, corrections, read-before-edit
+    clause, params = _where("turns", project)
+    cur.execute(
+        f"""
+        SELECT session_id, project,
+            SUM(input_tokens + output_tokens) as total_tokens,
+            COUNT(*) as turn_count,
+            SUM(CASE WHEN tool_name = 'Read' THEN 1 ELSE 0 END) as reads,
+            SUM(CASE WHEN tool_name IN ('Edit', 'Write') THEN 1 ELSE 0 END) as edits,
+            COUNT(DISTINCT tool_name) as tool_div,
+            SUM(CASE WHEN stop_reason = 'max_tokens' THEN 1 ELSE 0 END) as max_tok,
+            MAX(model) as model,
+            SUM(input_tokens) as inp, SUM(output_tokens) as outp,
+            SUM(cache_creation_tokens) as cc, SUM(cache_read_tokens) as cr
+        FROM turns WHERE {clause}
+        GROUP BY session_id
+    """,
+        params,
+    )
+    session_turn_data = {r[0]: r for r in cur.fetchall()}
+
+    # Session-level prompt data: texts per session
+    clause, params = _where("prompts", project)
+    cur.execute(
+        f"""
+        SELECT session_id, text, char_length
+        FROM prompts WHERE {clause}
+        ORDER BY session_id, timestamp
+    """,
+        params,
+    )
+    session_prompts: dict[str, list[tuple[str, int]]] = {}
+    for r in cur.fetchall():
+        session_prompts.setdefault(r[0], []).append((r[1], r[2]))
+
+    # Check read-before-edit per session (ordered tool sequence)
+    clause, params = _where("turns", project)
+    cur.execute(
+        f"""
+        SELECT session_id, tool_name
+        FROM turns
+        WHERE tool_name IN ('Read', 'Edit', 'Write') AND {clause}
+        ORDER BY session_id, timestamp
+    """,
+        params,
+    )
+    session_tool_seq: dict[str, list[str]] = {}
+    for r in cur.fetchall():
+        session_tool_seq.setdefault(r[0], []).append(r[1])
+
+    from .models import MODEL_PRICING
+
+    session_metrics: list[SessionMetrics] = []
+    for sid, turn_row in session_turn_data.items():
+        prompts_list = session_prompts.get(sid, [])
+        texts = [p[0] for p in prompts_list]
+        lengths = [p[1] for p in prompts_list]
+
+        corr_count = sum(1 for t in texts if _CORRECTION_RE.match(t.strip()))
+        file_refs = sum(1 for t in texts if _FILE_REF_RE.search(t))
+
+        # Check read-before-edit sequence
+        seq = session_tool_seq.get(sid, [])
+        has_rbe = False
+        if seq:
+            first_edit_idx = next(
+                (i for i, t in enumerate(seq) if t in ("Edit", "Write")), None
+            )
+            if first_edit_idx is not None and first_edit_idx > 0:
+                has_rbe = any(seq[j] == "Read" for j in range(first_edit_idx))
+
+        # Cost estimate
+        model = turn_row[8] or "_default"
+        pricing = MODEL_PRICING.get(model, MODEL_PRICING["_default"])
+        inp = turn_row[9] or 0
+        outp, cc, cr = turn_row[10] or 0, turn_row[11] or 0, turn_row[12] or 0
+        cost = (
+            (inp / 1_000_000) * pricing["input"]
+            + (outp / 1_000_000) * pricing["output"]
+            + (cc / 1_000_000) * pricing["cache_write"]
+            + (cr / 1_000_000) * pricing["cache_read"]
+        )
+
+        session_metrics.append(SessionMetrics(
+            session_id=sid,
+            project=turn_row[1],
+            prompt_count=len(prompts_list),
+            turn_count=turn_row[3],
+            total_tokens=turn_row[2] or 0,
+            correction_count=corr_count,
+            read_count=turn_row[4],
+            edit_count=turn_row[5],
+            has_read_before_edit=has_rbe,
+            tool_diversity=turn_row[6],
+            avg_prompt_length=sum(lengths) / len(lengths) if lengths else 0,
+            file_ref_count=file_refs,
+            cost=round(cost, 4),
+            model=model,
+            max_tokens_hits=turn_row[7],
+        ))
+
+    # Stop reason counts
+    clause, params = _where("turns", project)
+    cur.execute(
+        f"""
+        SELECT stop_reason, COUNT(*)
+        FROM turns WHERE stop_reason IS NOT NULL AND {clause}
+        GROUP BY stop_reason
+    """,
+        params,
+    )
+    stop_reason_counts = {r[0]: r[1] for r in cur.fetchall()}
+
     return ScoringData(
         prompt_lengths=prompt_lengths,
         total_input_tokens=total_input,
@@ -389,6 +524,8 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
         prompt_texts=prompt_texts,
         turns_per_session=turns_per_session,
         unique_tools_per_session=unique_tools_per_session,
+        session_metrics=session_metrics,
+        stop_reason_counts=stop_reason_counts,
     )
 
 

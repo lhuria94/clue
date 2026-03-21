@@ -105,6 +105,27 @@ class ProjectScore:
 
 
 @dataclass
+class SessionMetrics:
+    """Per-session metrics for comparative analysis."""
+
+    session_id: str
+    project: str
+    prompt_count: int = 0
+    turn_count: int = 0
+    total_tokens: int = 0
+    correction_count: int = 0
+    read_count: int = 0
+    edit_count: int = 0
+    has_read_before_edit: bool = False
+    tool_diversity: int = 0
+    avg_prompt_length: float = 0.0
+    file_ref_count: int = 0
+    cost: float = 0.0
+    model: str = ""
+    max_tokens_hits: int = 0
+
+
+@dataclass
 class ScoringData:
     """Pre-queried data for the scoring engine. No database dependency."""
 
@@ -122,6 +143,9 @@ class ScoringData:
     prompt_texts: list[str] = field(default_factory=list)
     turns_per_session: list[int] = field(default_factory=list)
     unique_tools_per_session: list[int] = field(default_factory=list)
+    # Per-session comparative data
+    session_metrics: list[SessionMetrics] = field(default_factory=list)
+    stop_reason_counts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass

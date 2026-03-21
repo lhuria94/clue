@@ -2,8 +2,8 @@
 
 Scores across 7 dimensions to produce a composite 0-100 score:
 1. Prompt Quality       (20%) — Are prompts specific, structured, and context-rich?
-2. Token Efficiency     (15%) — Value per token, turns-to-completion ratio
-3. Cache Utilisation    (10%) — Cache hit rate, session continuity
+2. Cost Efficiency      (15%) — Actual spend per session, cost distribution consistency
+3. Wasted Spend         (10%) — What fraction of cost goes to corrections/rework
 4. Tool Mastery         (15%) — Diversity, effectiveness patterns, antipattern detection
 5. Session Discipline   (10%) — Focused sessions, tool workflow within sessions
 6. Cost Awareness       (10%) — Model selection appropriate to task complexity
@@ -27,7 +27,7 @@ _SLASH_CMD_RE = re.compile(r"^/\w+")
 # File/path references — indicates specificity
 _FILE_REF_RE = re.compile(
     r"(?:"
-    r"[\w./\\-]+\.(?:py|js|ts|tsx|jsx|java|kt|go|rs|rb|css|html|yml|yaml|toml|json|md|sh|sql)"
+    r"[\w./\\-]+\.(?:py|js|ts|tsx|jsx|java|kt|go|rs|rb|php|c|cpp|h|cs|swift|r|scala|lua|pl|ex|exs|hs|elm|vue|svelte|css|scss|less|html|xml|yml|yaml|toml|json|md|sh|bash|zsh|sql|tf|hcl|proto|graphql|dockerfile)"
     r"|line\s+\d+"
     r"|:\d+(?::\d+)?"
     r")"
@@ -58,6 +58,7 @@ def _analyse_prompt_texts(texts: list[str]) -> dict:
             "corrections": 0, "correction_pct": 0.0,
             "confirmations": 0, "confirmation_pct": 0.0,
             "contextual_short": 0,
+            "file_ref_correction_rate": 0, "non_file_ref_correction_rate": 0,
         }
 
     slash_cmds = sum(1 for t in texts if _SLASH_CMD_RE.match(t.strip()))
@@ -70,6 +71,33 @@ def _analyse_prompt_texts(texts: list[str]) -> dict:
         if len(t) < 50 and (_SLASH_CMD_RE.match(t.strip()) or _FILE_REF_RE.search(t))
     )
 
+    # Compute correction rate after file-ref vs non-file-ref prompts
+    # A correction is when the NEXT prompt is a correction pattern
+    file_ref_followed_by_correction = 0
+    non_file_ref_followed_by_correction = 0
+    file_ref_count_for_rate = 0
+    non_file_ref_count_for_rate = 0
+    for i in range(len(texts) - 1):
+        is_file_ref = bool(_FILE_REF_RE.search(texts[i]))
+        next_is_correction = bool(_CORRECTION_PATTERNS.match(texts[i + 1].strip()))
+        if is_file_ref:
+            file_ref_count_for_rate += 1
+            if next_is_correction:
+                file_ref_followed_by_correction += 1
+        else:
+            non_file_ref_count_for_rate += 1
+            if next_is_correction:
+                non_file_ref_followed_by_correction += 1
+
+    file_ref_cr = (
+        file_ref_followed_by_correction / file_ref_count_for_rate * 100
+        if file_ref_count_for_rate > 0 else 0
+    )
+    non_file_ref_cr = (
+        non_file_ref_followed_by_correction / non_file_ref_count_for_rate * 100
+        if non_file_ref_count_for_rate > 0 else 0
+    )
+
     return {
         "slash_cmds": slash_cmds,
         "slash_pct": slash_cmds / total * 100,
@@ -80,6 +108,8 @@ def _analyse_prompt_texts(texts: list[str]) -> dict:
         "confirmations": confirmations,
         "confirmation_pct": confirmations / total * 100,
         "contextual_short": contextual_short,
+        "file_ref_correction_rate": file_ref_cr,
+        "non_file_ref_correction_rate": non_file_ref_cr,
     }
 
 
@@ -178,11 +208,17 @@ def _score_prompt_quality(data: ScoringData) -> DimensionScore:
             f"Only {good_range_pct:.0f}% of prompts are in the 50-500 char sweet spot. "
             "Include context: what file, what behaviour, what you expect."
         )
+    # Only recommend file refs if user's own data doesn't contradict it
+    # (prompt_learning in export.py may show file-ref prompts have *higher* correction rates)
     if signals["file_ref_pct"] < 15 and total > 20:
-        recs.append(
-            f"Only {signals['file_ref_pct']:.0f}% of prompts reference specific files. "
-            "Including file paths and line numbers helps Claude find the right code faster."
-        )
+        # Check if file-ref prompts actually have lower correction rate
+        file_ref_correction = signals.get("file_ref_correction_rate", 0)
+        non_file_ref_correction = signals.get("non_file_ref_correction_rate", 0)
+        if file_ref_correction <= non_file_ref_correction or file_ref_correction == 0:
+            recs.append(
+                f"Only {signals['file_ref_pct']:.0f}% of prompts reference specific files. "
+                "Including file paths and line numbers helps Claude find the right code faster."
+            )
     if detailed_pct > 50:
         recs.append(
             "Over half your prompts are 300+ chars. Consider if some could be split into "
@@ -205,134 +241,158 @@ def _score_prompt_quality(data: ScoringData) -> DimensionScore:
     )
 
 
-def _score_token_efficiency(data: ScoringData) -> DimensionScore:
-    """Score token efficiency — value per token AND turns-to-completion.
+def _score_cost_efficiency(data: ScoringData) -> DimensionScore:
+    """Score cost efficiency — actual spend per session.
 
-    New signal: prompts-to-turns ratio measures how many human prompts are needed
-    per AI turn. Lower ratio = Claude understood and delivered on fewer attempts.
+    Uses real cost data from SessionMetrics. A session is a unit of work
+    (one task, one bug, one feature). Cost-per-session is the actionable metric.
     """
-    total_input = data.total_input_tokens
-    total_output = data.total_output_tokens
-    sessions = data.session_count or 1
+    metrics = data.session_metrics
     weight = 0.15
 
-    if total_input == 0:
+    costed = [m for m in metrics if m.cost > 0]
+    if not costed:
         return DimensionScore(
-            name="Token Efficiency",
-            score=0,
+            name="Cost Efficiency",
+            score=50,
             weight=weight,
-            grade="N/A",
-            explanation="No token data.",
+            grade="C",
+            explanation="Not enough session data to assess cost efficiency.",
             recommendations=[],
         )
 
-    # Output/input ratio — higher means more value extracted
-    oi_ratio = total_output / max(total_input, 1)
+    total_cost = sum(m.cost for m in costed)
+    avg_cps = total_cost / len(costed)
+    session_costs = sorted(m.cost for m in costed)
 
-    # Tokens per session — lower is more focused
-    tokens_per_session = (total_input + total_output) / sessions
+    # Median cost-per-session as baseline
+    median_cps = session_costs[len(session_costs) // 2]
 
-    # NEW: Prompts-to-turns ratio (human efficiency signal)
-    total_prompts = sum(data.prompts_per_session) if data.prompts_per_session else 0
-    total_turns = sum(data.turns_per_session) if data.turns_per_session else 0
-    prompt_turn_ratio = total_prompts / total_turns if total_turns > 0 else 1.0
+    # Score based on cost distribution — compare your sessions to each other
+    # Use the ratio of median to p90 as a spread indicator
+    p10 = session_costs[max(len(session_costs) // 10, 0)]
+    p90 = session_costs[min(len(session_costs) * 9 // 10, len(session_costs) - 1)]
 
-    # Score: ideal ratio is 0.5-3.0 (Claude generates meaningful output)
-    ratio_score = _clamp(oi_ratio * 25, 0, 30)
+    # Tight distribution (p90/median < 3x) = consistent = good
+    spread = p90 / max(median_cps, 0.01)
+    if spread < 2:
+        base = 85  # Very consistent spend
+    elif spread < 4:
+        base = 70
+    elif spread < 8:
+        base = 55
+    else:
+        base = 35  # Huge variance — some sessions wildly more expensive
 
-    # Score: penalise excessive tokens per session (>500K suggests thrashing)
-    session_score = _clamp(40 - max(0, (tokens_per_session - 100_000) / 10_000), 0, 40)
+    # Bonus: what fraction of total cost is in the top 10% of sessions?
+    top10_cost = sum(session_costs[-(max(len(session_costs) // 10, 1)):])
+    top10_pct = top10_cost / max(total_cost, 0.01) * 100
+    # If top 10% consumes <30% of budget, that's healthy
+    concentration_bonus = _clamp(15 - (top10_pct - 30) * 0.5, 0, 15)
 
-    # NEW: Efficiency bonus — fewer human prompts per AI turn is better
-    # Ideal prompt_turn_ratio is 0.2-0.5 (Claude does multiple tool calls per prompt)
-    efficiency_bonus = _clamp(30 - prompt_turn_ratio * 30, 0, 30)
-
-    score = _clamp(ratio_score + session_score + efficiency_bonus)
+    score = _clamp(base + concentration_bonus)
 
     recs = []
-    if oi_ratio < 0.3:
+    # Find expensive outlier sessions
+    if len(costed) >= 5:
+        expensive = sorted(costed, key=lambda m: m.cost, reverse=True)[:3]
+        top_cost = expensive[0].cost
+        if top_cost > total_cost * 0.2:
+            recs.append(
+                f"Your most expensive session cost ${top_cost:.2f} "
+                f"({top_cost / total_cost * 100:.0f}% of total spend). "
+                "Long sessions with many AI steps drive up cost — "
+                "start fresh for new tasks."
+            )
+    if spread >= 4:
         recs.append(
-            f"Output/input ratio is {oi_ratio:.2f} — Claude is reading a lot but generating "
-            "little. Consider pre-reading files yourself and providing focused context."
-        )
-    if tokens_per_session > 300_000:
-        recs.append(
-            f"Averaging {tokens_per_session / 1000:.0f}K tokens per session. "
-            "Break complex tasks into smaller sessions to reduce context bloat."
-        )
-    if prompt_turn_ratio > 0.7 and total_turns > 10:
-        recs.append(
-            f"Prompt-to-turn ratio is {prompt_turn_ratio:.2f} — you're prompting frequently "
-            "relative to Claude's actions. Give more complete instructions upfront so Claude "
-            "can chain multiple tool calls per prompt."
+            f"Session costs range from ${p10:.2f} to ${p90:.2f} "
+            f"(median ${median_cps:.2f}). "
+            "Check what makes your cheapest sessions efficient."
         )
 
     return DimensionScore(
-        name="Token Efficiency",
+        name="Cost Efficiency",
         score=round(score, 1),
         weight=weight,
         grade=_grade(score),
         explanation=(
-            f"Output/input ratio: {oi_ratio:.2f}, "
-            f"{tokens_per_session / 1000:.0f}K tokens/session, "
-            f"prompt/turn ratio: {prompt_turn_ratio:.2f}."
+            f"${avg_cps:.2f}/session avg, "
+            f"${median_cps:.2f} median, "
+            f"${total_cost:.2f} total across {len(costed)} sessions."
         ),
         recommendations=recs,
     )
 
 
-def _score_cache_utilisation(data: ScoringData) -> DimensionScore:
-    """Score cache utilisation — sustained sessions hit cache more.
+def _score_wasted_spend(data: ScoringData) -> DimensionScore:
+    """Score wasted spend — what fraction of cost goes to corrections/rework.
 
-    Enhanced with actionable recommendations for improving cache performance.
+    Uses actual session data: correction prompts × session cost fraction.
+    Lower waste = higher score.
     """
-    cache_create = data.cache_creation_tokens
-    cache_read = data.cache_read_tokens
-    cache_total = cache_create + cache_read
+    metrics = data.session_metrics
     weight = 0.10
 
-    if cache_total == 0:
+    if not metrics:
         return DimensionScore(
-            name="Cache Utilisation",
+            name="Wasted Spend",
             score=50,
             weight=weight,
             grade="C",
-            explanation="No cache data available.",
-            recommendations=[
-                "Cache data improves with sustained, focused sessions. "
-                "Use CLAUDE.md files to front-load project context so Claude reads less per turn."
-            ],
+            explanation="Not enough data to assess wasted spend.",
+            recommendations=[],
         )
 
-    hit_rate = cache_read / cache_total * 100
+    total_cost = sum(m.cost for m in metrics)
+    total_prompts = sum(m.prompt_count for m in metrics)
+    total_corrections = sum(m.correction_count for m in metrics)
 
-    # Higher hit rate = better. 90%+ is excellent, <50% is poor.
-    score = _clamp(hit_rate * 1.05)  # Slight bonus to make 95% = ~100
+    if total_cost == 0 or total_prompts == 0:
+        return DimensionScore(
+            name="Wasted Spend",
+            score=75,
+            weight=weight,
+            grade="B",
+            explanation="No cost data — unable to estimate waste.",
+            recommendations=[],
+        )
+
+    correction_pct = total_corrections / total_prompts * 100
+
+    # Estimate wasted cost: for sessions with corrections,
+    # waste ≈ correction_fraction × session_cost
+    wasted = 0.0
+    for m in metrics:
+        if m.correction_count > 0 and m.prompt_count > 0:
+            wasted += m.cost * (m.correction_count / m.prompt_count)
+    waste_pct = wasted / total_cost * 100 if total_cost > 0 else 0
+
+    # Score: 0% waste = 100, 5% = ~80, 15% = ~50, 30%+ = ~20
+    score = _clamp(100 - waste_pct * 3)
 
     recs = []
-    if hit_rate < 70:
+    if waste_pct > 5:
         recs.append(
-            f"Cache hit rate is {hit_rate:.0f}%. You may be context-switching too often. "
-            "Stay in one project/session longer to benefit from prompt caching."
+            f"~${wasted:.2f} ({waste_pct:.1f}% of spend) goes to "
+            f"correction-heavy sessions. "
+            f"{total_corrections} correction prompts across "
+            f"{sum(1 for m in metrics if m.correction_count > 0)} sessions."
         )
-    if hit_rate < 50:
+    if waste_pct > 15:
         recs.append(
-            "Very low cache hit rate suggests many short, disconnected sessions. "
-            "Batch related questions into single sessions."
-        )
-    if hit_rate >= 70 and cache_create > cache_read:
-        recs.append(
-            "More cache tokens are being created than read. Add a CLAUDE.md to your project "
-            "root — it front-loads context and boosts cache reuse across turns."
+            "High rework cost. Write prompts with specific file paths and "
+            "expected outcomes to reduce 'no, not that' corrections."
         )
 
     return DimensionScore(
-        name="Cache Utilisation",
+        name="Wasted Spend",
         score=round(score, 1),
         weight=weight,
         grade=_grade(score),
         explanation=(
-            f"Cache hit rate: {hit_rate:.1f}% ({cache_read:,} read / {cache_total:,} total)."
+            f"~${wasted:.2f} wasted ({waste_pct:.1f}% of ${total_cost:.2f} total), "
+            f"{correction_pct:.1f}% correction rate."
         ),
         recommendations=recs,
     )
@@ -501,7 +561,7 @@ def _score_session_discipline(data: ScoringData) -> DimensionScore:
     if avg_depth < 5:
         recs.append(
             f"Average session depth is {avg_depth:.1f} prompts. "
-            "Claude works best with sustained, multi-turn interactions."
+            "Claude works best with sustained, multi-step interactions."
         )
     if session_tools and structured_pct < 30:
         recs.append(
@@ -698,12 +758,130 @@ def _score_iteration_efficiency(data: ScoringData) -> DimensionScore:
     )
 
 
+def _data_driven_recommendations(data: ScoringData) -> list[str]:
+    """Generate recommendations by comparing YOUR sessions against each other.
+
+    Every recommendation is backed by actual per-session data — no generic
+    thresholds, no imagined metrics.  Each compares two groups of your own
+    sessions and cites the measured difference.
+    """
+    metrics = data.session_metrics
+    if len(metrics) < 5:
+        return []
+
+    recs: list[str] = []
+
+    # --- 1. Read-before-Edit vs not: correction rate comparison ---
+    rbe_sessions = [m for m in metrics if m.has_read_before_edit and m.edit_count > 0]
+    no_rbe = [m for m in metrics if not m.has_read_before_edit and m.edit_count > 0]
+    if len(rbe_sessions) >= 3 and len(no_rbe) >= 3:
+        rbe_corr = sum(m.correction_count for m in rbe_sessions) / max(
+            sum(m.prompt_count for m in rbe_sessions), 1
+        )
+        no_rbe_corr = sum(m.correction_count for m in no_rbe) / max(
+            sum(m.prompt_count for m in no_rbe), 1
+        )
+        if no_rbe_corr > rbe_corr and no_rbe_corr > 0.02:
+            rbe_pct = rbe_corr * 100
+            no_rbe_pct = no_rbe_corr * 100
+            recs.append(
+                f"Sessions where you Read before Edit have a {rbe_pct:.0f}% correction rate "
+                f"vs {no_rbe_pct:.0f}% without. Reading first across {len(rbe_sessions)} sessions "
+                f"saved rework."
+            )
+
+    # --- 2. File-ref prompts vs no file-ref: correction rate ---
+    with_refs = [m for m in metrics if m.file_ref_count > 0 and m.prompt_count > 0]
+    no_refs = [m for m in metrics if m.file_ref_count == 0 and m.prompt_count > 0]
+    if len(with_refs) >= 3 and len(no_refs) >= 3:
+        ref_corr = sum(m.correction_count for m in with_refs) / max(
+            sum(m.prompt_count for m in with_refs), 1
+        )
+        no_ref_corr = sum(m.correction_count for m in no_refs) / max(
+            sum(m.prompt_count for m in no_refs), 1
+        )
+        if no_ref_corr > ref_corr and no_ref_corr > 0.02:
+            recs.append(
+                f"Prompts with file references have a {ref_corr * 100:.0f}% correction rate. "
+                f"Without file refs: {no_ref_corr * 100:.0f}%. "
+                f"Naming the file upfront reduces back-and-forth."
+            )
+
+    # --- 3. Top 10% vs bottom 10% sessions by cost ---
+    costed = [m for m in metrics if m.cost > 0]
+    if len(costed) >= 10:
+        by_cost = sorted(costed, key=lambda m: m.cost)
+        n10 = max(len(by_cost) // 10, 1)
+        top10 = by_cost[:n10]       # cheapest sessions
+        bottom10 = by_cost[-n10:]   # most expensive sessions
+
+        top_avg_len = sum(m.avg_prompt_length for m in top10) / len(top10)
+        bot_avg_len = sum(m.avg_prompt_length for m in bottom10) / len(bottom10)
+        top_avg_turns = sum(m.turn_count for m in top10) / len(top10)
+        bot_avg_turns = sum(m.turn_count for m in bottom10) / len(bottom10)
+        top_avg_div = sum(m.tool_diversity for m in top10) / len(top10)
+        bot_avg_div = sum(m.tool_diversity for m in bottom10) / len(bottom10)
+
+        parts = []
+        if top_avg_len > bot_avg_len * 1.3:
+            parts.append(f"prompts avg {top_avg_len:.0f} chars (vs {bot_avg_len:.0f})")
+        if bot_avg_turns > top_avg_turns * 1.5:
+            parts.append(f"stay under {top_avg_turns:.0f} AI steps (vs {bot_avg_turns:.0f})")
+        if top_avg_div > bot_avg_div * 1.2:
+            parts.append(f"use {top_avg_div:.0f} tools (vs {bot_avg_div:.0f})")
+
+        if parts:
+            recs.append(
+                f"Your most efficient sessions {', '.join(parts)}."
+            )
+
+    # --- 4. Per-project comparison (cost per session) ---
+    projects: dict[str, list] = {}
+    for m in metrics:
+        if m.cost > 0:
+            projects.setdefault(m.project, []).append(m)
+
+    if len(projects) >= 2:
+        proj_efficiency = {}
+        for proj, sessions in projects.items():
+            if len(sessions) >= 3:
+                total_cost = sum(m.cost for m in sessions)
+                proj_efficiency[proj] = total_cost / len(sessions)
+        if len(proj_efficiency) >= 2:
+            ranked = sorted(proj_efficiency.items(), key=lambda x: x[1])
+            best_proj, best_cps = ranked[0]
+            worst_proj, worst_cps = ranked[-1]
+            if worst_cps > best_cps * 1.5:
+                ratio = worst_cps / best_cps if best_cps > 0 else 0
+                recs.append(
+                    f"In {best_proj} you spend ${best_cps:.2f}/session. "
+                    f"In {worst_proj} it's ${worst_cps:.2f}/session "
+                    f"({ratio:.1f}x more). Check what's different."
+                )
+
+    # --- 5. max_tokens hits correlate with session cost ---
+    max_tok_sessions = [m for m in metrics if m.max_tokens_hits > 0]
+    no_max_tok = [m for m in metrics if m.max_tokens_hits == 0 and m.cost > 0]
+    if len(max_tok_sessions) >= 2 and len(no_max_tok) >= 3:
+        avg_cost_max = sum(m.cost for m in max_tok_sessions) / len(max_tok_sessions)
+        avg_cost_no = sum(m.cost for m in no_max_tok) / len(no_max_tok)
+        if avg_cost_max > avg_cost_no * 1.5:
+            recs.append(
+                f"Sessions hitting context limits cost ${avg_cost_max:.2f} avg "
+                f"vs ${avg_cost_no:.2f} for others. "
+                f"{len(max_tok_sessions)} sessions hit max_tokens — "
+                f"start fresh sessions for new tasks to avoid context bloat."
+            )
+
+    return recs
+
+
 def compute_score(data: ScoringData) -> EfficiencyScore:
     """Compute the composite efficiency score from pre-queried data."""
     dimensions = [
         _score_prompt_quality(data),
-        _score_token_efficiency(data),
-        _score_cache_utilisation(data),
+        _score_cost_efficiency(data),
+        _score_wasted_spend(data),
         _score_tool_mastery(data),
         _score_session_discipline(data),
         _score_cost_awareness(data),
@@ -717,13 +895,20 @@ def compute_score(data: ScoringData) -> EfficiencyScore:
     else:
         overall = 0
 
-    # Collect top recommendations (max 5, ordered by lowest-scoring dimensions)
+    # Data-driven comparative recommendations first (most valuable)
+    data_recs = _data_driven_recommendations(data)
+
+    # Then threshold-based recommendations from lowest-scoring dimensions
     sorted_dims = sorted(dimensions, key=lambda d: d.score)
-    top_recs = []
+    dim_recs = []
     for d in sorted_dims:
         for r in d.recommendations:
-            if len(top_recs) < 5:
-                top_recs.append(r)
+            if len(dim_recs) < 3:
+                dim_recs.append(r)
+
+    # Combine: data-driven first, then threshold-based, max 5 total
+    top_recs = data_recs[:3] + dim_recs[:2]
+    top_recs = top_recs[:5]
 
     return EfficiencyScore(
         overall=round(overall, 1),

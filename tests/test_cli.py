@@ -6,7 +6,17 @@ import contextlib
 import json
 from pathlib import Path
 
-from clue.cli import cmd_doctor, cmd_export, cmd_extract, cmd_merge, cmd_score, cmd_setup
+import pytest
+
+from clue.cli import (
+    cmd_digest,
+    cmd_doctor,
+    cmd_export,
+    cmd_extract,
+    cmd_merge,
+    cmd_score,
+    cmd_setup,
+)
 
 
 class _Args:
@@ -166,3 +176,20 @@ class TestCmdSetup:
         # Hook should only appear once
         stop_hooks = settings["hooks"]["Stop"]
         assert len(stop_hooks) == 1
+
+
+class TestCmdDigest:
+    def test_no_data(self, tmp_path, capsys):
+        db_path = str(tmp_path / "no.db")
+        with pytest.raises(SystemExit):
+            cmd_digest(_Args(db=db_path))
+        captured = capsys.readouterr()
+        assert "No data" in captured.out
+
+    def test_with_data(self, mock_claude_dir, tmp_path, capsys):
+        db_path = str(tmp_path / "test.db")
+        cmd_extract(_Args(claude_dir=str(mock_claude_dir), db=db_path, incremental=False))
+        cmd_digest(_Args(db=db_path))
+        captured = capsys.readouterr()
+        # Should either print digest or "Not enough data"
+        assert "Weekly Digest" in captured.out or "Not enough data" in captured.out

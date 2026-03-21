@@ -12,7 +12,7 @@ import sqlite3
 from datetime import datetime
 
 from .db import query_all_projects, query_project_stats, query_scoring_data, query_trend_data
-from .models import MODEL_PRICING
+from .models import MODEL_PRICING, ScoringData
 from .scorer import compute_project_scores, compute_score, compute_trend
 
 # Lightweight correction detection for daily iteration signals
@@ -34,6 +34,331 @@ def _estimate_cost(
     )
 
 
+def _compute_session_insights(
+    global_data: ScoringData,
+    per_project_data: dict[str, ScoringData],
+    projects: list[str],
+) -> dict:
+    """Compute session-level insights from per-session metrics.
+
+    Features:
+    1. Best/worst sessions compared (top 10% vs bottom 10%)
+    2. Per-project coaching with comparative data
+    """
+    metrics = global_data.session_metrics
+    if len(metrics) < 5:
+        return {"best_worst": None, "project_coaching": []}
+
+    # --- Best vs worst sessions (by session cost) ---
+    costed = [m for m in metrics if m.cost > 0]
+    best_worst = None
+    if len(costed) >= 10:
+        by_cpp = sorted(costed, key=lambda m: m.cost)
+        n10 = max(len(by_cpp) // 10, 1)
+        top10 = by_cpp[:n10]
+        bottom10 = by_cpp[-n10:]
+
+        best_worst = {
+            "top10": {
+                "count": len(top10),
+                "avg_prompt_length": round(
+                    sum(m.avg_prompt_length for m in top10) / len(top10), 0
+                ),
+                "avg_turns": round(sum(m.turn_count for m in top10) / len(top10), 1),
+                "avg_tool_diversity": round(
+                    sum(m.tool_diversity for m in top10) / len(top10), 1
+                ),
+                "avg_cost": round(sum(m.cost for m in top10) / len(top10), 2),
+                "correction_rate": round(
+                    sum(m.correction_count for m in top10)
+                    / max(sum(m.prompt_count for m in top10), 1) * 100, 1
+                ),
+                "read_before_edit_pct": round(
+                    sum(1 for m in top10 if m.has_read_before_edit)
+                    / len(top10) * 100, 0
+                ),
+            },
+            "bottom10": {
+                "count": len(bottom10),
+                "avg_prompt_length": round(
+                    sum(m.avg_prompt_length for m in bottom10) / len(bottom10), 0
+                ),
+                "avg_turns": round(
+                    sum(m.turn_count for m in bottom10) / len(bottom10), 1
+                ),
+                "avg_tool_diversity": round(
+                    sum(m.tool_diversity for m in bottom10) / len(bottom10), 1
+                ),
+                "avg_cost": round(
+                    sum(m.cost for m in bottom10) / len(bottom10), 2
+                ),
+                "correction_rate": round(
+                    sum(m.correction_count for m in bottom10)
+                    / max(sum(m.prompt_count for m in bottom10), 1) * 100, 1
+                ),
+                "read_before_edit_pct": round(
+                    sum(1 for m in bottom10 if m.has_read_before_edit)
+                    / len(bottom10) * 100, 0
+                ),
+            },
+        }
+
+    # --- Per-project coaching ---
+    project_coaching = []
+    for proj in projects:
+        proj_metrics = [m for m in metrics if m.project == proj and m.prompt_count > 0]
+        if len(proj_metrics) < 3:
+            continue
+
+        total_prompts = sum(m.prompt_count for m in proj_metrics)
+        total_corr = sum(m.correction_count for m in proj_metrics)
+        total_cost = sum(m.cost for m in proj_metrics)
+        total_tokens = sum(m.total_tokens for m in proj_metrics)
+
+        project_coaching.append({
+            "project": proj,
+            "sessions": len(proj_metrics),
+            "prompts": total_prompts,
+            "correction_rate": round(total_corr / max(total_prompts, 1) * 100, 1),
+            "cost_per_session": round(total_cost / len(proj_metrics), 2),
+            "tokens_per_session": round(total_tokens / len(proj_metrics), 0),
+            "avg_prompt_length": round(
+                sum(m.avg_prompt_length for m in proj_metrics) / len(proj_metrics), 0
+            ),
+        })
+
+    # Sort by cost_per_session descending (most expensive first)
+    project_coaching.sort(key=lambda x: x["cost_per_session"], reverse=True)
+
+    return {"best_worst": best_worst, "project_coaching": project_coaching}
+
+
+def _compute_weekly_digest(
+    cur: sqlite3.Cursor,
+    total_cost: float,
+) -> dict:
+    """Compute this-week vs last-week comparison for the digest.
+
+    Uses today's date as anchor so the window is always the actual
+    current week, not relative to the latest data point.
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    cur.execute("SELECT COUNT(*) FROM prompts WHERE date > date(?, '-7 days')", (today,))
+    if cur.fetchone()[0] == 0:
+        # No data in the last 7 days — check if any data exists at all
+        cur.execute("SELECT COUNT(*) FROM prompts")
+        if cur.fetchone()[0] == 0:
+            return {"has_data": False}
+
+    # This week: last 7 days from today
+    cur.execute(
+        """
+        SELECT
+            COUNT(*) as prompts,
+            COUNT(DISTINCT session_id) as sessions,
+            AVG(char_length) as avg_len,
+            SUM(CASE WHEN char_length < 15 THEN 1 ELSE 0 END) as short_prompts
+        FROM prompts WHERE date > date(?, '-7 days')
+    """,
+        (today,),
+    )
+    this_week = cur.fetchone()
+
+    # Last week: 8-14 days ago from today
+    cur.execute(
+        """
+        SELECT
+            COUNT(*) as prompts,
+            COUNT(DISTINCT session_id) as sessions,
+            AVG(char_length) as avg_len,
+            SUM(CASE WHEN char_length < 15 THEN 1 ELSE 0 END) as short_prompts
+        FROM prompts WHERE date > date(?, '-14 days') AND date <= date(?, '-7 days')
+    """,
+        (today, today),
+    )
+    last_week = cur.fetchone()
+
+    # This week cost
+    cur.execute(
+        """
+        SELECT SUM(input_tokens), SUM(output_tokens),
+            SUM(cache_creation_tokens), SUM(cache_read_tokens)
+        FROM turns WHERE SUBSTR(timestamp, 1, 10) > date(?, '-7 days')
+    """,
+        (today,),
+    )
+    tw_tokens = cur.fetchone()
+    tw_cost = _estimate_cost(
+        "_default",
+        tw_tokens[0] or 0, tw_tokens[1] or 0,
+        tw_tokens[2] or 0, tw_tokens[3] or 0,
+    )
+
+    # Last week cost
+    cur.execute(
+        """
+        SELECT SUM(input_tokens), SUM(output_tokens),
+            SUM(cache_creation_tokens), SUM(cache_read_tokens)
+        FROM turns
+        WHERE SUBSTR(timestamp, 1, 10) > date(?, '-14 days')
+            AND SUBSTR(timestamp, 1, 10) <= date(?, '-7 days')
+    """,
+        (today, today),
+    )
+    lw_tokens = cur.fetchone()
+    lw_cost = _estimate_cost(
+        "_default",
+        lw_tokens[0] or 0, lw_tokens[1] or 0,
+        lw_tokens[2] or 0, lw_tokens[3] or 0,
+    )
+
+    # Correction rate this week vs last week
+    # Uses the scorer's correction pattern regex on prompt text
+    from .scorer import _CORRECTION_PATTERNS
+
+    tw_prompts_total = this_week[0] or 0
+    lw_prompts_total = last_week[0] or 0
+
+    # This week corrections
+    cur.execute(
+        "SELECT text FROM prompts WHERE date > date(?, '-7 days')", (today,)
+    )
+    tw_corrections = sum(
+        1 for (t,) in cur.fetchall()
+        if t and _CORRECTION_PATTERNS.match(t.strip())
+    )
+    tw_correction_rate = round(
+        tw_corrections / max(tw_prompts_total, 1) * 100, 1
+    )
+
+    # Last week corrections
+    cur.execute(
+        "SELECT text FROM prompts WHERE date > date(?, '-14 days') AND date <= date(?, '-7 days')",
+        (today, today),
+    )
+    lw_corrections = sum(
+        1 for (t,) in cur.fetchall()
+        if t and _CORRECTION_PATTERNS.match(t.strip())
+    )
+    lw_correction_rate = round(
+        lw_corrections / max(lw_prompts_total, 1) * 100, 1
+    )
+
+    # Compute date labels for display
+    from datetime import timedelta
+
+    today_dt = datetime.now()
+    tw_start = (today_dt - timedelta(days=7)).strftime("%b %d")
+    lw_start = (today_dt - timedelta(days=14)).strftime("%b %d")
+    lw_end = (today_dt - timedelta(days=7)).strftime("%b %d")
+    today_label = today_dt.strftime("%b %d")
+
+    return {
+        "has_data": True,
+        "this_week_label": f"{tw_start} – {today_label}",
+        "last_week_label": f"{lw_start} – {lw_end}",
+        "this_week": {
+            "prompts": tw_prompts_total,
+            "sessions": this_week[1] or 0,
+            "avg_prompt_length": round(this_week[2] or 0, 0),
+            "cost": round(tw_cost, 2),
+            "correction_rate": tw_correction_rate,
+        },
+        "last_week": {
+            "prompts": lw_prompts_total,
+            "sessions": last_week[1] or 0,
+            "avg_prompt_length": round(last_week[2] or 0, 0),
+            "cost": round(lw_cost, 2),
+            "correction_rate": lw_correction_rate,
+        },
+    }
+
+
+def _compute_prompt_learning(cur: sqlite3.Cursor) -> list[dict]:
+    """Correlate prompt patterns with correction follow-ups.
+
+    For each prompt, check if the NEXT prompt in the same session is a
+    correction.  Group by pattern type and report correction rates.
+    This is factual — derived from actual prompt sequences.
+    """
+    cur.execute("""
+        SELECT session_id, text, char_length
+        FROM prompts ORDER BY session_id, timestamp
+    """)
+    rows = list(cur.fetchall())
+
+    from .scorer import _CORRECTION_PATTERNS, _FILE_REF_RE, _SLASH_CMD_RE
+
+    # Group prompts by session, detect which are followed by corrections
+    sessions: dict[str, list[tuple[str, int, bool]]] = {}
+    for r in rows:
+        sid, text, length = r[0], r[1], r[2]
+        sessions.setdefault(sid, []).append((text, length, False))
+
+    # Mark prompts followed by a correction
+    pattern_stats: dict[str, dict] = {
+        "With file references": {"total": 0, "followed_by_correction": 0},
+        "Without file references": {"total": 0, "followed_by_correction": 0},
+        "Short prompts (<50 chars)": {"total": 0, "followed_by_correction": 0},
+        "Detailed prompts (>200 chars)": {"total": 0, "followed_by_correction": 0},
+        "Slash commands": {"total": 0, "followed_by_correction": 0},
+    }
+
+    for _sid, prompt_list in sessions.items():
+        for i, (text, length, _) in enumerate(prompt_list):
+            # Is the NEXT prompt a correction?
+            next_is_correction = False
+            if i + 1 < len(prompt_list):
+                next_text = prompt_list[i + 1][0]
+                next_is_correction = bool(
+                    _CORRECTION_PATTERNS.match(next_text.strip())
+                )
+
+            # Skip if this prompt IS a correction (don't count correction→correction)
+            if _CORRECTION_PATTERNS.match(text.strip()):
+                continue
+
+            has_file_ref = bool(_FILE_REF_RE.search(text))
+            is_slash = bool(_SLASH_CMD_RE.match(text.strip()))
+
+            if has_file_ref:
+                pattern_stats["With file references"]["total"] += 1
+                if next_is_correction:
+                    pattern_stats["With file references"]["followed_by_correction"] += 1
+            else:
+                pattern_stats["Without file references"]["total"] += 1
+                if next_is_correction:
+                    pattern_stats["Without file references"]["followed_by_correction"] += 1
+
+            if length < 50:
+                pattern_stats["Short prompts (<50 chars)"]["total"] += 1
+                if next_is_correction:
+                    pattern_stats["Short prompts (<50 chars)"]["followed_by_correction"] += 1
+
+            if length > 200:
+                pattern_stats["Detailed prompts (>200 chars)"]["total"] += 1
+                if next_is_correction:
+                    pattern_stats["Detailed prompts (>200 chars)"]["followed_by_correction"] += 1
+
+            if is_slash:
+                pattern_stats["Slash commands"]["total"] += 1
+                if next_is_correction:
+                    pattern_stats["Slash commands"]["followed_by_correction"] += 1
+
+    result = []
+    for pattern, stats in pattern_stats.items():
+        if stats["total"] >= 5:
+            rate = stats["followed_by_correction"] / stats["total"] * 100
+            result.append({
+                "pattern": pattern,
+                "count": stats["total"],
+                "correction_rate": round(rate, 1),
+            })
+
+    return result
+
+
 def generate_dashboard_data(
     conn: sqlite3.Connection,
     scrub: bool = False,
@@ -53,7 +378,7 @@ def generate_dashboard_data(
     cur.execute("SELECT COUNT(*) FROM prompts")
     total_prompts = cur.fetchone()[0]
 
-    cur.execute("SELECT COUNT(DISTINCT session_id) FROM sessions")
+    cur.execute("SELECT COUNT(DISTINCT session_id) FROM prompts")
     total_sessions = cur.fetchone()[0]
 
     cur.execute("SELECT COUNT(DISTINCT project) FROM prompts")
@@ -432,7 +757,8 @@ def generate_dashboard_data(
     """)
     from .scorer import _FILE_REF_RE, _SLASH_CMD_RE
 
-    pattern_buckets: dict[str, list[int]] = {
+    # Track (session_id, tokens) per pattern to deduplicate session tokens
+    pattern_buckets: dict[str, list[tuple[str, int]]] = {
         "has_file_ref": [],
         "has_slash_cmd": [],
         "short_prompt": [],
@@ -440,32 +766,122 @@ def generate_dashboard_data(
         "all": [],
     }
     for r in cur.fetchall():
-        text, tokens = r[1], r[2] or 0
-        pattern_buckets["all"].append(tokens)
+        sid, text, tokens = r[0], r[1], r[2] or 0
+        pattern_buckets["all"].append((sid, tokens))
         if _FILE_REF_RE.search(text):
-            pattern_buckets["has_file_ref"].append(tokens)
+            pattern_buckets["has_file_ref"].append((sid, tokens))
         if _SLASH_CMD_RE.match(text.strip()):
-            pattern_buckets["has_slash_cmd"].append(tokens)
+            pattern_buckets["has_slash_cmd"].append((sid, tokens))
         if len(text) < 50:
-            pattern_buckets["short_prompt"].append(tokens)
+            pattern_buckets["short_prompt"].append((sid, tokens))
         if len(text) > 200:
-            pattern_buckets["long_prompt"].append(tokens)
+            pattern_buckets["long_prompt"].append((sid, tokens))
 
     prompt_pattern_stats = []
-    for pattern, token_list in pattern_buckets.items():
-        count = len(token_list)
-        if count > 0:
-            # Deduplicate by session (tokens are per-session, repeated per prompt)
-            avg_tokens = sum(token_list) / count
+    for pattern, entries in pattern_buckets.items():
+        prompt_count = len(entries)
+        if prompt_count > 0:
+            # Deduplicate: average session tokens across unique sessions, not per prompt
+            unique_sessions = {sid: tok for sid, tok in entries}
+            avg_tokens = sum(unique_sessions.values()) / len(unique_sessions)
             prompt_pattern_stats.append({
                 "pattern": pattern,
-                "count": count,
+                "count": prompt_count,
                 "avg_session_tokens": round(avg_tokens, 0),
             })
 
+    # --- Session insights: best/worst sessions, per-project coaching ---
+    session_insights = _compute_session_insights(scoring_data, per_project_data, projects)
+
+    # --- Weekly digest ---
+    weekly_digest = _compute_weekly_digest(cur, total_estimated_cost)
+
+    # --- Prompt learning: pattern → correction correlation ---
+    prompt_learning = _compute_prompt_learning(cur)
+
+    # --- Time-of-day correction analysis ---
+    cur.execute("SELECT hour, text FROM prompts WHERE hour IS NOT NULL")
+    hourly_texts: dict[int, list[str]] = {}
+    for r in cur.fetchall():
+        hourly_texts.setdefault(r[0], []).append(r[1])
+
+    hourly_correction_rates = []
+    for hour in sorted(hourly_texts.keys()):
+        texts = hourly_texts[hour]
+        total = len(texts)
+        corr = sum(1 for t in texts if _CORRECTION_RE.match(t.strip()))
+        hourly_correction_rates.append({
+            "hour": hour,
+            "prompts": total,
+            "corrections": corr,
+            "correction_rate": round(corr / max(total, 1) * 100, 1),
+        })
+
+    # --- Expensive sessions drill-down (top 20 by estimated cost) ---
+    expensive_sessions = []
+    costed_metrics = sorted(
+        [m for m in scoring_data.session_metrics if m.cost > 0],
+        key=lambda m: m.cost, reverse=True,
+    )[:20]
+    for m in costed_metrics:
+        expensive_sessions.append({
+            "session_id": m.session_id[:12],
+            "project": m.project,
+            "cost": round(m.cost, 2),
+            "prompts": m.prompt_count,
+            "corrections": m.correction_count,
+            "correction_rate": round(
+                m.correction_count / max(m.prompt_count, 1) * 100, 1
+            ),
+            "ai_responses": m.turn_count,
+            "tools": m.tool_diversity,
+            "model": m.model or "unknown",
+        })
+
+    # --- Branch coaching (correction rate + cost per branch) ---
+    cur.execute("""
+        SELECT t.git_branch,
+            COUNT(DISTINCT t.session_id) as sessions,
+            COALESCE(SUM(t.input_tokens), 0) as input_tokens,
+            COALESCE(SUM(t.output_tokens), 0) as output_tokens,
+            COALESCE(SUM(t.cache_creation_tokens), 0) as cache_create,
+            COALESCE(SUM(t.cache_read_tokens), 0) as cache_read
+        FROM turns t
+        WHERE t.git_branch IS NOT NULL AND t.git_branch != ''
+            AND t.git_branch != 'HEAD'
+        GROUP BY t.git_branch ORDER BY 2 DESC LIMIT 20
+    """)
+    branch_rows = cur.fetchall()
+
+    branch_coaching = []
+    for br, sess_count, in_tokens, out_tokens, cache_cr, cache_rd in branch_rows:
+        # Get prompts for this branch's sessions
+        cur.execute("""
+            SELECT p.text FROM prompts p
+            WHERE p.session_id IN (
+                SELECT DISTINCT session_id FROM turns
+                WHERE git_branch = ?
+            )
+        """, (br,))
+        branch_prompts = [r[0] for r in cur.fetchall()]
+        br_total = len(branch_prompts)
+        br_corr = sum(
+            1 for t in branch_prompts if _CORRECTION_RE.match(t.strip())
+        )
+        br_cost = _estimate_cost(
+            "_default", in_tokens, out_tokens, cache_cr, cache_rd
+        )
+        branch_coaching.append({
+            "branch": br,
+            "sessions": sess_count,
+            "prompts": br_total,
+            "correction_rate": round(br_corr / max(br_total, 1) * 100, 1),
+            "est_cost": round(br_cost, 2),
+        })
+
     result = {
         "generated_at": datetime.now().isoformat(),
-        "schema_version": 5,
+        "schema_version": 6,
         "user_label": user_label,
         "overview": {
             "total_prompts": total_prompts,
@@ -539,6 +955,13 @@ def generate_dashboard_data(
         "project_cost_efficiency": project_cost_efficiency,
         "correction_cost": correction_cost_data,
         "prompt_pattern_stats": prompt_pattern_stats,
+        # Data-driven insights
+        "session_insights": session_insights,
+        "weekly_digest": weekly_digest,
+        "prompt_learning": prompt_learning,
+        "hourly_correction_rates": hourly_correction_rates,
+        "expensive_sessions": expensive_sessions,
+        "branch_coaching": branch_coaching,
     }
 
     # --- Features 1/6/10: Git-correlated session outcomes (opt-in) ---

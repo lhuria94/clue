@@ -12,9 +12,17 @@ from clue.db import (
     query_scoring_data,
     query_trend_data,
 )
-from clue.models import ConversationTurn, Prompt, ScoringData, TokenUsage, TrendData
+from clue.models import (
+    ConversationTurn,
+    Prompt,
+    ScoringData,
+    SessionMetrics,
+    TokenUsage,
+    TrendData,
+)
 from clue.scorer import (
     _analyse_prompt_texts,
+    _data_driven_recommendations,
     _grade,
     compute_project_scores,
     compute_score,
@@ -91,6 +99,26 @@ class TestAnalysePromptTexts:
         # ok is just short, no context
         assert result["contextual_short"] == 2
 
+    def test_file_ref_correction_rate(self):
+        # File-ref prompt followed by correction, non-file-ref followed by normal
+        texts = [
+            "fix src/auth.py",       # file-ref
+            "no, the other method",  # correction after file-ref
+            "do something",          # non-file-ref
+            "looks good",            # not a correction
+        ]
+        result = _analyse_prompt_texts(texts)
+        # 1 file-ref prompt, followed by 1 correction → 100%
+        assert result["file_ref_correction_rate"] == 100.0
+        # 2 non-file-ref prompts ("no, the other method", "do something")
+        # "do something" followed by "looks good" (not a correction) → 0/2 = 0%
+        assert result["non_file_ref_correction_rate"] == 0.0
+
+    def test_file_ref_correction_rate_empty(self):
+        result = _analyse_prompt_texts([])
+        assert result["file_ref_correction_rate"] == 0
+        assert result["non_file_ref_correction_rate"] == 0
+
 
 class TestComputeScore:
     def test_returns_all_dimensions(self, db_conn, sample_prompts, sample_turns):
@@ -105,8 +133,8 @@ class TestComputeScore:
 
         names = {d.name for d in score.dimensions}
         assert "Prompt Quality" in names
-        assert "Token Efficiency" in names
-        assert "Cache Utilisation" in names
+        assert "Cost Efficiency" in names
+        assert "Wasted Spend" in names
         assert "Tool Mastery" in names
         assert "Session Discipline" in names
         assert "Cost Awareness" in names
@@ -406,3 +434,126 @@ class TestScoreWithPureData:
         tm_with = next(d for d in score_with.dimensions if d.name == "Tool Mastery")
         tm_without = next(d for d in score_without.dimensions if d.name == "Tool Mastery")
         assert tm_with.score > tm_without.score
+
+
+class TestDataDrivenRecommendations:
+    """Tests for _data_driven_recommendations which compares session groups."""
+
+    def _make_metrics(self, count, **overrides):
+        """Create a list of SessionMetrics with specified defaults."""
+        metrics = []
+        for i in range(count):
+            m = SessionMetrics(
+                session_id=f"s{i}",
+                project=overrides.get("project", "proj-a"),
+                prompt_count=overrides.get("prompt_count", 10),
+                turn_count=overrides.get("turn_count", 20),
+                total_tokens=overrides.get("total_tokens", 5000),
+                correction_count=overrides.get("correction_count", 0),
+                read_count=overrides.get("read_count", 5),
+                edit_count=overrides.get("edit_count", 3),
+                has_read_before_edit=overrides.get("has_read_before_edit", True),
+                tool_diversity=overrides.get("tool_diversity", 5),
+                avg_prompt_length=overrides.get("avg_prompt_length", 80.0),
+                file_ref_count=overrides.get("file_ref_count", 3),
+                cost=overrides.get("cost", 0.50),
+                model=overrides.get("model", "claude-sonnet-4-6"),
+                max_tokens_hits=overrides.get("max_tokens_hits", 0),
+            )
+            metrics.append(m)
+        return metrics
+
+    def test_returns_empty_with_few_sessions(self):
+        """Less than 5 sessions → no recommendations."""
+        data = ScoringData(session_metrics=self._make_metrics(3))
+        assert _data_driven_recommendations(data) == []
+
+    def test_read_before_edit_recommendation(self):
+        """Sessions with Read-before-Edit vs without should produce a rec."""
+        rbe = self._make_metrics(
+            4, has_read_before_edit=True, edit_count=5,
+            correction_count=1, prompt_count=20,
+        )
+        no_rbe = self._make_metrics(
+            4, has_read_before_edit=False, edit_count=5,
+            correction_count=8, prompt_count=20,
+        )
+        # Change session_ids to avoid duplicates
+        for i, m in enumerate(no_rbe):
+            m.session_id = f"n{i}"
+        data = ScoringData(session_metrics=rbe + no_rbe)
+        recs = _data_driven_recommendations(data)
+        assert any("Read before Edit" in r for r in recs)
+
+    def test_file_ref_recommendation(self):
+        """Sessions with file refs vs without should produce a rec."""
+        with_refs = self._make_metrics(
+            4, file_ref_count=5, correction_count=1, prompt_count=20,
+        )
+        no_refs = self._make_metrics(
+            4, file_ref_count=0, correction_count=6, prompt_count=20,
+        )
+        for i, m in enumerate(no_refs):
+            m.session_id = f"n{i}"
+        data = ScoringData(session_metrics=with_refs + no_refs)
+        recs = _data_driven_recommendations(data)
+        assert any("file ref" in r.lower() for r in recs)
+
+    def test_top_bottom_10_recommendation(self):
+        """With 10+ costed sessions, should compare top/bottom 10%."""
+        # Efficient sessions: low cost, high prompt length, low turns
+        efficient = self._make_metrics(
+            5, cost=0.10, avg_prompt_length=150.0,
+            turn_count=10, tool_diversity=6, prompt_count=10,
+        )
+        # Inefficient: high cost, short prompts, many turns
+        inefficient = self._make_metrics(
+            5, cost=2.00, avg_prompt_length=20.0,
+            turn_count=50, tool_diversity=2, prompt_count=10,
+        )
+        for i, m in enumerate(inefficient):
+            m.session_id = f"n{i}"
+        data = ScoringData(session_metrics=efficient + inefficient)
+        recs = _data_driven_recommendations(data)
+        assert any("efficient" in r.lower() for r in recs)
+
+    def test_per_project_comparison(self):
+        """Two projects with different cost-per-prompt should produce a rec."""
+        proj_a = self._make_metrics(
+            4, project="cheap-proj", cost=0.10, prompt_count=10,
+        )
+        proj_b = self._make_metrics(
+            4, project="expensive-proj", cost=2.00, prompt_count=10,
+        )
+        for i, m in enumerate(proj_b):
+            m.session_id = f"n{i}"
+        data = ScoringData(session_metrics=proj_a + proj_b)
+        recs = _data_driven_recommendations(data)
+        assert any("cheap-proj" in r or "expensive-proj" in r for r in recs)
+
+    def test_max_tokens_recommendation(self):
+        """Sessions hitting max_tokens should produce a rec if cost is higher."""
+        normal = self._make_metrics(
+            5, max_tokens_hits=0, cost=0.20,
+        )
+        hitting_max = self._make_metrics(
+            3, max_tokens_hits=3, cost=1.50,
+        )
+        for i, m in enumerate(hitting_max):
+            m.session_id = f"n{i}"
+        data = ScoringData(session_metrics=normal + hitting_max)
+        recs = _data_driven_recommendations(data)
+        assert any("context limit" in r.lower() or "max_tokens" in r for r in recs)
+
+    def test_no_false_recommendations(self):
+        """When all sessions are similar, should not produce misleading recs."""
+        # All sessions identical — no meaningful differences
+        metrics = self._make_metrics(
+            10, has_read_before_edit=True, edit_count=3,
+            file_ref_count=2, correction_count=0, cost=0.30,
+            prompt_count=10, max_tokens_hits=0,
+        )
+        data = ScoringData(session_metrics=metrics)
+        recs = _data_driven_recommendations(data)
+        # Should be empty or very few — no meaningful differences exist
+        assert len(recs) <= 2

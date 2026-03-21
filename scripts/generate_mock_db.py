@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import random
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -188,10 +187,7 @@ def generate() -> None:
         weekday = day.weekday()
 
         # Fewer sessions on weekends
-        if weekday >= 5:
-            num_sessions = random.randint(0, 3)
-        else:
-            num_sessions = random.randint(2, 8)
+        num_sessions = random.randint(0, 3) if weekday >= 5 else random.randint(2, 8)
 
         for _ in range(num_sessions):
             session_counter += 1

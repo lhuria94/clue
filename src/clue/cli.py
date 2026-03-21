@@ -42,7 +42,7 @@ def cmd_extract(args: argparse.Namespace) -> None:
     stats = run_extract(claude_dir, db_path, incremental=incremental)
 
     print(f"  Prompts: {stats['prompts']}")
-    print(f"  Turns:   {stats['turns']}")
+    print(f"  AI Responses: {stats['turns']}")
     print(f"  Sessions: {stats['sessions']}")
     print("Done.")
 
@@ -308,7 +308,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             cur = conn.execute("SELECT COUNT(*) FROM turns")
             turn_count = cur.fetchone()[0]
             conn.close()
-            check("SQLite database", True, f"{prompt_count} prompts, {turn_count} turns")
+            check("SQLite database", True, f"{prompt_count} prompts, {turn_count} AI responses")
         except Exception as e:
             check("SQLite database", False, str(e))
     else:
@@ -419,7 +419,8 @@ def cmd_setup(args: argparse.Namespace) -> None:
     # 3. Run initial extraction
     print("  Running initial extraction...")
     stats = run_extract(claude_dir, db_path)
-    print(f"    {stats['prompts']} prompts, {stats['turns']} turns, {stats['sessions']} sessions")
+    prompts, resps, sess = stats["prompts"], stats["turns"], stats["sessions"]
+    print(f"    {prompts} prompts, {resps} AI responses, {sess} sessions")
 
     # 4. Print initial score
     conn = init_db(db_path)
@@ -437,6 +438,76 @@ def cmd_setup(args: argparse.Namespace) -> None:
     print("  Data auto-captures after each Claude Code session via hook.\n")
 
 
+def cmd_digest(args: argparse.Namespace) -> None:
+    """Print a data-driven weekly digest to terminal."""
+
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print("No data yet. Run: clue extract")
+        sys.exit(1)
+
+    conn = init_db(db_path)
+    data = generate_dashboard_data(conn)
+    conn.close()
+
+    digest = data.get("weekly_digest", {})
+    if not digest.get("has_data"):
+        print("Not enough data for a weekly digest yet.")
+        return
+
+    tw = digest["this_week"]
+    lw = digest["last_week"]
+
+    tw_label = digest.get("this_week_label", "This week")
+    print(f"\n  Weekly Digest ({tw_label})")
+    print(f"  {'─' * 50}")
+
+    # Line 1: Activity delta
+    if lw["prompts"] > 0:
+        delta = ((tw["prompts"] - lw["prompts"]) / lw["prompts"]) * 100
+        arrow = "+" if delta > 0 else ""
+        print(f"  {tw['prompts']} prompts across {tw['sessions']} sessions "
+              f"({arrow}{delta:.0f}% vs last week)")
+    else:
+        print(f"  {tw['prompts']} prompts across {tw['sessions']} sessions")
+
+    # Line 2: Cost delta
+    if lw["cost"] > 0:
+        cost_delta = tw["cost"] - lw["cost"]
+        arrow = "+" if cost_delta > 0 else ""
+        print(f"  Spent ${tw['cost']:.2f} ({arrow}${cost_delta:.2f} vs last week)")
+    else:
+        print(f"  Spent ${tw['cost']:.2f}")
+
+    # Line 3: Prompt quality delta
+    if lw["avg_prompt_length"] > 0:
+        len_delta = tw["avg_prompt_length"] - lw["avg_prompt_length"]
+        direction = "longer" if len_delta > 0 else "shorter"
+        print(f"  Avg prompt length: {tw['avg_prompt_length']:.0f} chars "
+              f"({abs(len_delta):.0f} chars {direction})")
+
+    # Line 4-5: Data-driven recommendations
+    eff = data.get("efficiency_score", {})
+    recs = eff.get("top_recommendations", [])
+    if recs:
+        print("\n  This week, try:")
+        for r in recs[:2]:
+            print(f"  → {r}")
+
+    # Line 6: Prompt learning insight
+    prompt_learning = data.get("prompt_learning", [])
+    with_refs = next((p for p in prompt_learning if p["pattern"] == "With file references"), None)
+    without_refs = next(
+        (p for p in prompt_learning if p["pattern"] == "Without file references"), None
+    )
+    if with_refs and without_refs:
+        print(f"\n  Prompt insight: file-ref prompts have "
+              f"{with_refs['correction_rate']:.0f}% correction rate "
+              f"vs {without_refs['correction_rate']:.0f}% without.")
+
+    print()
+
+
 def cmd_dashboard(args: argparse.Namespace) -> None:
     """Run extract + serve the Streamlit dashboard."""
     claude_dir = Path(args.claude_dir)
@@ -451,7 +522,8 @@ def cmd_dashboard(args: argparse.Namespace) -> None:
     # Initial extract
     print(f"Extracting from {claude_dir}...")
     stats = run_extract(claude_dir, db_path)
-    print(f"  {stats['prompts']} prompts, {stats['turns']} turns, {stats['sessions']} sessions")
+    prompts, resps, sess = stats["prompts"], stats["turns"], stats["sessions"]
+    print(f"  {prompts} prompts, {resps} AI responses, {sess} sessions")
 
     # Launch Streamlit — dashboard queries SQLite directly
     app_path = Path(__file__).parent / "dashboard" / "app.py"
@@ -530,6 +602,9 @@ def main() -> None:
     # score
     sub.add_parser("score", help="Print efficiency score to terminal")
 
+    # digest
+    sub.add_parser("digest", help="Weekly digest — what improved, what to try next")
+
     # dashboard
     dash_p = sub.add_parser("dashboard", help="Extract data and serve the dashboard")
     dash_p.add_argument("-p", "--port", type=int, default=8484)
@@ -543,6 +618,7 @@ def main() -> None:
         "export": cmd_export,
         "merge": cmd_merge,
         "score": cmd_score,
+        "digest": cmd_digest,
         "dashboard": cmd_dashboard,
     }
 
