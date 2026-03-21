@@ -42,7 +42,7 @@ git clone <repo-url>; cd clue; .\setup.ps1
 | 2 | Creates `.venv/` virtual environment | Yes |
 | 3 | Installs `clue` + dev tools into venv | Yes |
 | 4 | Offers to install [Taskfile](https://taskfile.dev) for shortcuts (optional) | Prompted |
-| 5 | Runs 120-test suite to verify everything works | Yes |
+| 5 | Runs 180-test suite to verify everything works | Yes |
 | 6 | Extracts all your Claude Code data from `~/.claude/` | Yes |
 | 7 | Installs PostStop hook for continuous auto-capture | Yes |
 | 8 | Prints your AI Efficiency Score with recommendations | Yes |
@@ -76,11 +76,11 @@ git clone <repo-url>; cd clue; .\setup.ps1
 | **Schema** | Versioned migrations | `db.py` runs numbered migrations on startup. Add columns without breaking existing databases |
 | **Watermarks** | SQLite table | File mtimes tracked per-source. Incremental extraction only re-parses changed files |
 | **Dashboard** | Streamlit + Plotly | Interactive, auto-refreshing, live SQLite queries, native dark/light theme |
-| **Scoring** | Python weighted composite | 6 dimensions, 0-100 per dimension, weighted average. Deterministic, no ML |
+| **Scoring** | Python weighted composite | 7 dimensions, 0-100 per dimension, weighted average. Deterministic, no ML |
 | **Hook** | Claude Code PostStop | Fires after every session. Runs incremental extract in background. Zero config after setup |
 | **Team sharing** | JSON export + merge | Each user exports locally. Merge command combines. No shared infrastructure |
 | **Privacy** | `--scrub` flag | Strips all prompt text from exports. Aggregated metrics only. No absolute paths in dashboard |
-| **Tests** | pytest | 149 tests across unit, integration, security, and CLI layers |
+| **Tests** | pytest | 180 tests across unit, integration, security, and CLI layers |
 | **Task runner** | Taskfile (optional) | Shortcuts for common operations. Falls back to `python -m clue` if not installed |
 | **Cross-platform** | `pathlib` + platform detection | Windows backslash path encoding, PowerShell setup script, platform-aware doctor |
 
@@ -123,8 +123,8 @@ Every user gets scored **0-100** across 7 weighted dimensions:
 | Dimension | Weight | What it measures | Score drivers |
 |---|---|---|---|
 | **Prompt Quality** | 20% | Are prompts specific and context-rich? | Length distribution, slash commands, file references, confirmation rate |
-| **Token Efficiency** | 15% | Value per token spent? | Output/input ratio, tokens/session, prompt-to-turn leverage |
-| **Cache Utilisation** | 10% | Benefiting from prompt caching? | Cache hit rate, CLAUDE.md usage, session continuity |
+| **Cost Efficiency** | 15% | Consistent spend per session? | Cost-per-session distribution, spread (p90/median), concentration (top 10% share) |
+| **Wasted Spend** | 10% | How much rework costs you? | Correction rate, estimated cost of AI responses after corrections |
 | **Tool Mastery** | 15% | Using tools effectively? | Diversity, Read→Edit workflow, per-session tool mix, antipatterns |
 | **Session Discipline** | 10% | Focused, structured sessions? | Depth range (5-40), tool workflow structure |
 | **Cost Awareness** | 10% | Right model for the task? | Model mix across Opus/Sonnet/Haiku tiers |
@@ -137,17 +137,17 @@ AI Efficiency Score: 76/100  [B]  -16.6%
 
 Dimension Scores:
 Prompt Quality            50   D   20%   Avg 59 chars, 38% in ideal range, 12% with file refs
-Token Efficiency          85   A   15%   Output/input ratio: 2.10, prompt/turn ratio: 0.35
-Cache Utilisation        100  A+   10%   Cache hit rate: 95.3%
+Cost Efficiency           85   A   15%   Median $0.42/session, p90/median spread: 1.8x
+Wasted Spend             78   B   10%   4% correction rate, $12.30 wasted on rework
 Tool Mastery              90   A   15%   20 tools used, avg 4.2 tools/session
 Session Discipline        46   D   10%   41% sessions <3 prompts, 60% structured
 Cost Awareness            81   B   10%   Sonnet 93%, Opus 3%, Haiku 4%
 Iteration Efficiency      72   B   20%   4% corrections, 2.8x AI leverage
 
 Recommendations:
-1. Batch related questions into single sessions for better context.
-2. Start fresh sessions for new tasks — long sessions degrade quality.
-3. Include context in prompts: what file, what behaviour, what you expect.
+1. Your most efficient sessions stay under 18 AI steps — keep tasks focused.
+2. Include context in prompts: what file, what behaviour, what you expect.
+3. Start fresh sessions for new tasks — long sessions degrade quality.
 ```
 
 ---
@@ -158,11 +158,11 @@ Streamlit + Plotly dashboard served at `http://127.0.0.1:8484`:
 
 ### Score Overview
 
-Your AI Efficiency Score front and centre — a radial gauge with grade, trend indicator, and the top actionable recommendations. KPI cards show totals at a glance.
+Cost-first hero with estimated spend, cost per session, and correction waste. Efficiency score with all 7 dimensions, trend indicator, and top actionable recommendations. KPI cards show totals at a glance.
 
 ![Score Overview](docs/screenshots/01-score-overview.png)
 
-All 7 scoring dimensions with individual grades, weights, and explanations so you know exactly where to improve.
+KPI row with prompts, tokens, cache hit rate, average prompt length, and project count — all filtered by the selected date range.
 
 ![Dimensions](docs/screenshots/02-dimensions.png)
 
@@ -204,7 +204,9 @@ Developer journey view — usage streak, week-over-week comparison, GitHub-style
 
 ### Insights
 
-Advanced analytics — correction cost (tokens wasted on rework), prompt pattern analysis, session outcome classification (productive/exploratory/abandoned via git correlation), time-to-value histogram, and team percentile benchmarks (when merged JSON available).
+Advanced analytics — weekly digest with correction rate trends, cheapest vs costliest sessions comparison, per-project coaching with outlier warnings, prompt learning (what patterns correlate with efficiency), expensive sessions table (top 20 by cost), time-of-day correction rate analysis, branch coaching (correction rate and cost per git branch), and team percentile benchmarks (when merged JSON available).
+
+![Insights Tab](docs/screenshots/tab-insights.png)
 
 ---
 
@@ -306,7 +308,7 @@ task test-unit      # Unit tests only
 task test-integration # Integration + security tests
 ```
 
-**149 tests** across 4 layers:
+**180 tests** across 4 layers:
 
 | Layer | Files | What it covers |
 |---|---|---|
