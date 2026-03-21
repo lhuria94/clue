@@ -301,13 +301,13 @@ def _score_cost_efficiency(data: ScoringData) -> DimensionScore:
             recs.append(
                 f"Your most expensive session cost ${top_cost:.2f} "
                 f"({top_cost / total_cost * 100:.0f}% of total spend). "
-                "Long sessions with many AI steps drive up cost — "
+                "Long sessions with many back-and-forths drive up cost — "
                 "start fresh for new tasks."
             )
     if spread >= 4:
         recs.append(
             f"Session costs range from ${p10:.2f} to ${p90:.2f} "
-            f"(median ${median_cps:.2f}). "
+            f"(typical ${median_cps:.2f}). "
             "Check what makes your cheapest sessions efficient."
         )
 
@@ -317,8 +317,8 @@ def _score_cost_efficiency(data: ScoringData) -> DimensionScore:
         weight=weight,
         grade=_grade(score),
         explanation=(
-            f"${avg_cps:.2f}/session avg, "
-            f"${median_cps:.2f} median, "
+            f"${avg_cps:.2f}/session average, "
+            f"${median_cps:.2f} typical, "
             f"${total_cost:.2f} total across {len(costed)} sessions."
         ),
         recommendations=recs,
@@ -461,17 +461,18 @@ def _score_tool_mastery(data: ScoringData) -> DimensionScore:
     recs = []
     if unique_tools < 5:
         recs.append(
-            f"Only using {unique_tools} distinct tools. Explore Agent (for parallel research), "
-            "Grep (for codebase search), and Edit (for precise changes)."
+            f"Only using {unique_tools} distinct tools. Try Agent for parallel research, "
+            "Grep for searching code, and Edit for precise file changes."
         )
     if tools.get("Bash", 0) / max(total_uses, 1) > 0.5:
         recs.append(
-            "Heavy Bash usage. Use Read instead of cat, Grep instead of grep, "
-            "Edit instead of sed — dedicated tools are safer and more reviewable."
+            "Heavy terminal usage. Prefer Read over cat, Grep over grep, "
+            "Edit over sed — dedicated tools are safer and easier to review."
         )
     if "Agent" not in tools:
         recs.append(
-            "Not using subagents. The Agent tool can parallelise research and complex tasks."
+            "Not using parallel agents. The Agent tool can run multiple "
+            "research tasks at the same time."
         )
     if edit_count > 0 and read_count < edit_count:
         recs.append(
@@ -480,7 +481,7 @@ def _score_tool_mastery(data: ScoringData) -> DimensionScore:
         )
     if session_tools and avg_session_diversity < 2:
         recs.append(
-            f"Avg {avg_session_diversity:.1f} tools per session. Effective sessions use "
+            f"Average {avg_session_diversity:.1f} tools per session. Effective sessions use "
             "a mix of Read, Edit, Grep, and Bash for a complete research-implement-test workflow."
         )
 
@@ -490,9 +491,9 @@ def _score_tool_mastery(data: ScoringData) -> DimensionScore:
         weight=weight,
         grade=_grade(score),
         explanation=(
-            f"{unique_tools} tools used, top tool is "
+            f"{unique_tools} tools used, most used is "
             f"{max(tools, key=lambda k: tools[k])} ({top_tool_pct:.0f}%), "
-            f"avg {avg_session_diversity:.1f} tools/session."
+            f"average {avg_session_diversity:.1f} per session."
         ),
         recommendations=recs,
     )
@@ -575,7 +576,7 @@ def _score_session_discipline(data: ScoringData) -> DimensionScore:
         weight=weight,
         grade=_grade(score),
         explanation=(
-            f"Avg {avg_depth:.1f} prompts/session, {ideal_pct:.0f}% in ideal range (5-40)"
+            f"Average {avg_depth:.1f} prompts/session, {ideal_pct:.0f}% in ideal range (5-40)"
             + (f", {structured_pct:.0f}% structured." if session_tools else ".")
         ),
         recommendations=recs,
@@ -636,7 +637,7 @@ def _score_cost_awareness(data: ScoringData) -> DimensionScore:
         )
     if opus_pct > 60:
         recs.append(
-            f"Opus is {opus_pct:.0f}% of calls. Reserve Opus for complex reasoning — "
+            f"Opus is {opus_pct:.0f}% of usage. Reserve Opus for complex reasoning — "
             "Sonnet handles most coding tasks at 1/5 the cost."
         )
     if haiku_pct == 0 and total_calls > 50 and model_count > 1:
@@ -729,7 +730,7 @@ def _score_iteration_efficiency(data: ScoringData) -> DimensionScore:
     if leverage < 1.5 and total_turns > 10:
         recs.append(
             f"Claude averages {leverage:.1f} actions per prompt. Give broader task descriptions "
-            "so Claude can chain multiple tool calls (read → edit → test) per prompt."
+            "so Claude can chain multiple steps (read → edit → test) per prompt."
         )
     if session_tools and workflow_pct < 30:
         recs.append(
@@ -751,8 +752,8 @@ def _score_iteration_efficiency(data: ScoringData) -> DimensionScore:
         grade=_grade(score),
         explanation=(
             f"{correction_pct:.0f}% corrections, "
-            f"{leverage:.1f}x AI leverage, "
-            f"{workflow_pct:.0f}% structured sessions."
+            f"{leverage:.1f} actions per prompt, "
+            f"{workflow_pct:.0f}% multi-step sessions."
         ),
         recommendations=recs,
     )
@@ -826,7 +827,7 @@ def _data_driven_recommendations(data: ScoringData) -> list[str]:
         if top_avg_len > bot_avg_len * 1.3:
             parts.append(f"prompts avg {top_avg_len:.0f} chars (vs {bot_avg_len:.0f})")
         if bot_avg_turns > top_avg_turns * 1.5:
-            parts.append(f"stay under {top_avg_turns:.0f} AI steps (vs {bot_avg_turns:.0f})")
+            parts.append(f"stay under {top_avg_turns:.0f} back-and-forths (vs {bot_avg_turns:.0f})")
         if top_avg_div > bot_avg_div * 1.2:
             parts.append(f"use {top_avg_div:.0f} tools (vs {bot_avg_div:.0f})")
 
@@ -867,10 +868,10 @@ def _data_driven_recommendations(data: ScoringData) -> list[str]:
         avg_cost_no = sum(m.cost for m in no_max_tok) / len(no_max_tok)
         if avg_cost_max > avg_cost_no * 1.5:
             recs.append(
-                f"Sessions hitting context limits cost ${avg_cost_max:.2f} avg "
+                f"Sessions hitting context limits cost ${avg_cost_max:.2f} average "
                 f"vs ${avg_cost_no:.2f} for others. "
-                f"{len(max_tok_sessions)} sessions hit max_tokens — "
-                f"start fresh sessions for new tasks to avoid context bloat."
+                f"{len(max_tok_sessions)} sessions ran out of context — "
+                f"start fresh sessions for new tasks to keep costs down."
             )
 
     return recs

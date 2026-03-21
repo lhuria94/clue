@@ -42,7 +42,7 @@ def cmd_extract(args: argparse.Namespace) -> None:
     stats = run_extract(claude_dir, db_path, incremental=incremental)
 
     print(f"  Prompts: {stats['prompts']}")
-    print(f"  AI Responses: {stats['turns']}")
+    print(f"  Replies: {stats['turns']}")
     print(f"  Sessions: {stats['sessions']}")
     print("Done.")
 
@@ -283,9 +283,9 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             settings = json.loads(settings_file.read_text(encoding="utf-8"))
             has_hook = "Stop" in settings.get("hooks", {})
             check(
-                "PostStop hook",
+                "Auto-capture",
                 has_hook,
-                "continuous capture enabled" if has_hook else "not installed",
+                "enabled — data syncs after each session" if has_hook else "not installed",
                 fix="Run: python -m clue setup",
             )
         except json.JSONDecodeError:
@@ -308,11 +308,11 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             cur = conn.execute("SELECT COUNT(*) FROM turns")
             turn_count = cur.fetchone()[0]
             conn.close()
-            check("SQLite database", True, f"{prompt_count} prompts, {turn_count} AI responses")
+            check("Database", True, f"{prompt_count} prompts, {turn_count} replies")
         except Exception as e:
-            check("SQLite database", False, str(e))
+            check("Database", False, str(e))
     else:
-        check("SQLite database", False, "not yet created", fix="Run: python -m clue extract")
+        check("Database", False, "not yet created", fix="Run: python -m clue extract")
 
     # 9. Dashboard app
     dashboard_app = Path(__file__).parent / "dashboard" / "app.py"
@@ -412,15 +412,15 @@ def cmd_setup(args: argparse.Namespace) -> None:
         )
         hooks["Stop"] = stop_hooks
         settings_file.write_text(json.dumps(settings, indent=2), encoding="utf-8")
-        print("  Installed PostStop hook for continuous capture")
+        print("  Installed auto-capture (runs after each Claude Code session)")
     else:
-        print("  PostStop hook already installed")
+        print("  Auto-capture already installed")
 
     # 3. Run initial extraction
     print("  Running initial extraction...")
     stats = run_extract(claude_dir, db_path)
     prompts, resps, sess = stats["prompts"], stats["turns"], stats["sessions"]
-    print(f"    {prompts} prompts, {resps} AI responses, {sess} sessions")
+    print(f"    {prompts} prompts, {resps} replies, {sess} sessions")
 
     # 4. Print initial score
     conn = init_db(db_path)
@@ -435,7 +435,7 @@ def cmd_setup(args: argparse.Namespace) -> None:
             print(f"    {i}. {rec}")
 
     print("\n  Setup complete. Run 'python -m clue dashboard' to open.")
-    print("  Data auto-captures after each Claude Code session via hook.\n")
+    print("  Data auto-captures after each Claude Code session.\n")
 
 
 def cmd_digest(args: argparse.Namespace) -> None:
@@ -523,7 +523,7 @@ def cmd_dashboard(args: argparse.Namespace) -> None:
     print(f"Extracting from {claude_dir}...")
     stats = run_extract(claude_dir, db_path)
     prompts, resps, sess = stats["prompts"], stats["turns"], stats["sessions"]
-    print(f"  {prompts} prompts, {resps} AI responses, {sess} sessions")
+    print(f"  {prompts} prompts, {resps} replies, {sess} sessions")
 
     # Launch Streamlit — dashboard queries SQLite directly
     app_path = Path(__file__).parent / "dashboard" / "app.py"
@@ -567,7 +567,7 @@ def main() -> None:
     parser.add_argument(
         "--db",
         default=str(DEFAULT_DB_PATH),
-        help="Path to SQLite database (default: ~/.claude/usage.db)",
+        help="Path to Database (default: ~/.claude/usage.db)",
     )
 
     sub = parser.add_subparsers(dest="command")

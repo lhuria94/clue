@@ -341,7 +341,7 @@ with cost_hero_col:
             f"${wasted:.2f}",
             delta=f"{waste_pct:.1f}% of spend",
             delta_color="inverse",
-            help="All-time estimated cost of AI responses following correction prompts",
+            help="All-time estimated cost of replies following correction prompts",
         )
 
 with score_hero_col:
@@ -410,13 +410,13 @@ kpi_projects = len({r["pj"] for r in filter_by_range(DATA.get("daily_project", [
 
 k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("Prompts", f"{kpi_prompts:,}")
-tok_help = f"In: {fmt_tokens(kpi_input)} / Out: {fmt_tokens(kpi_output)}"
+tok_help = f"Sent: {fmt_tokens(kpi_input)} / Received: {fmt_tokens(kpi_output)}"
 k2.metric("Tokens", fmt_tokens(kpi_tokens), help=tok_help)
 k3.metric(
     "Cache Hit Rate", f"{kpi_cache_pct}%",
-    help="% of input tokens served from cache. Higher = less redundant data sent",
+    help="How often Claude reused previous context. Higher = faster and cheaper",
 )
-k4.metric("Avg Prompt Length", f"{int(kpi_avg_prompt):,} chars")
+k4.metric("Prompt Length (avg)", f"{int(kpi_avg_prompt):,} chars")
 k5.metric("Projects", str(kpi_projects))
 
 # ── Project Scores ───────────────────────────────────────────────
@@ -470,13 +470,13 @@ with tab_activity:
     if tokens_f:
         col_tok1, col_tok2 = st.columns(2)
         with col_tok1:
-            st.markdown("**Daily Token Consumption**")
+            st.markdown("**Daily Token Usage**")
             fig_tok = go.Figure()
             for key, label, color in [
-                ("i", "Input", COLORS["blue"]),
-                ("o", "Output", COLORS["accent"]),
-                ("cw", "Cache Write", COLORS["amber"]),
-                ("cr", "Cache Read", COLORS["green"]),
+                ("i", "Sent to Claude", COLORS["blue"]),
+                ("o", "Received from Claude", COLORS["accent"]),
+                ("cw", "New context cached", COLORS["amber"]),
+                ("cr", "Reused from cache", COLORS["green"]),
             ]:
                 fig_tok.add_trace(go.Bar(
                     x=[r["d"] for r in tokens_f],
@@ -655,13 +655,19 @@ with tab_tools:
                 st.plotly_chart(fig_trend, width="stretch", key="tool_trend", config=PLOTLY_CONFIG)
 
     # Stop reason distribution
+    _STOP_LABELS = {
+        "end_turn": "Finished",
+        "tool_use": "Using a tool",
+        "stop_sequence": "Hit limit",
+        "max_tokens": "Ran out of context",
+    }
     stop_reasons = DATA.get("stop_reason_totals", [])
     if stop_reasons:
         col_sr1, col_sr2 = st.columns(2)
         with col_sr1:
-            st.markdown("**Stop Reason Distribution**")
+            st.markdown("**Why Sessions End**")
             fig_sr = go.Figure(go.Pie(
-                labels=[r["reason"] for r in stop_reasons],
+                labels=[_STOP_LABELS.get(r["reason"], r["reason"]) for r in stop_reasons],
                 values=[r["n"] for r in stop_reasons],
                 hole=0.55,
                 marker=dict(colors=CHART_COLORS[:len(stop_reasons)]),
@@ -678,7 +684,7 @@ with tab_tools:
         with col_sr2:
             daily_sr = filter_by_range(DATA.get("daily_stop_reasons", []), DAYS)
             if daily_sr:
-                st.markdown("**Daily Stop Reasons**")
+                st.markdown("**Daily Session Endings**")
                 sr_by_reason: dict[str, dict] = {}
                 for r in daily_sr:
                     sr_by_reason.setdefault(r["reason"], {"dates": [], "counts": []})
@@ -689,7 +695,8 @@ with tab_tools:
                 for i, (reason, vals) in enumerate(sr_by_reason.items()):
                     fig_dsr.add_trace(go.Bar(
                         x=vals["dates"], y=vals["counts"],
-                        name=reason, marker_color=CHART_COLORS[i % len(CHART_COLORS)],
+                        name=_STOP_LABELS.get(reason, reason),
+                        marker_color=CHART_COLORS[i % len(CHART_COLORS)],
                     ))
                 fig_dsr.update_layout(barmode="stack", height=300, **PLOTLY_LAYOUT)
                 st.plotly_chart(
@@ -699,7 +706,7 @@ with tab_tools:
     # Agentic usage
     daily_agent = filter_by_range(DATA.get("daily_agentic", []), DAYS)
     if daily_agent:
-        st.markdown("**Agentic vs Main AI Responses**")
+        st.markdown("**Parallel Agents vs Main Conversation**")
         col_ag1, col_ag2 = st.columns(2)
         with col_ag1:
             fig_ag = go.Figure()
@@ -719,7 +726,7 @@ with tab_tools:
         with col_ag2:
             agent_cost = DATA.get("agentic_cost_split", {})
             if agent_cost.get("agent", 0) > 0 or agent_cost.get("main", 0) > 0:
-                st.markdown("**Cost Split: Agent vs Main**")
+                st.markdown("**Cost: Agents vs Main**")
                 fig_ac = go.Figure(go.Pie(
                     labels=["Main", "Agent"],
                     values=[agent_cost.get("main", 0), agent_cost.get("agent", 0)],
@@ -793,16 +800,16 @@ with tab_cost:
             for m in sorted(model_totals, key=lambda x: x["estimated_cost_usd"], reverse=True):
                 table_data.append({
                     "Model": m["model"],
-                    "Input Tokens": fmt_tokens(m["input_tokens"]),
-                    "Output Tokens": fmt_tokens(m["output_tokens"]),
-                    "Est. Cost": f'${m["estimated_cost_usd"]:.2f}',
+                    "Tokens Sent": fmt_tokens(m["input_tokens"]),
+                    "Tokens Received": fmt_tokens(m["output_tokens"]),
+                    "Estimated Cost": f'${m["estimated_cost_usd"]:.2f}',
                 })
             st.dataframe(table_data, width="stretch", hide_index=True)
 
         # API calls by model (doughnut)
         models_f = filter_by_range(DATA.get("daily_models", []), DAYS)
         if models_f:
-            st.markdown("**API Calls by Model**")
+            st.markdown("**Usage by Model**")
             model_calls = {}
             for r in models_f:
                 model_calls[r["m"]] = model_calls.get(r["m"], 0) + r["n"]
@@ -838,7 +845,7 @@ with tab_patterns:
                 marker=dict(cornerradius=4),
             ))
             fig_h.update_layout(
-                height=300, xaxis_title="Hour (24h)", **PLOTLY_LAYOUT,
+                height=300, xaxis_title="Hour of Day", **PLOTLY_LAYOUT,
             )
             st.plotly_chart(fig_h, width="stretch", key="hourly", config=PLOTLY_CONFIG)
 
@@ -864,8 +871,8 @@ with tab_patterns:
         for b in branches:
             branch_data.append({
                 "Branch": b["branch"],
-                "AI Responses": b["turns"],
-                "Output Tokens": fmt_tokens(b.get("output_tokens", 0)),
+                "Replies": b["turns"],
+                "Tokens Received": fmt_tokens(b.get("output_tokens", 0)),
             })
         st.dataframe(branch_data, width="stretch", hide_index=True)
 
@@ -928,7 +935,7 @@ with tab_journey:
             fig_hm.update_layout(
                 height=250,
                 xaxis=dict(
-                    dtick=1, title="Hour (24h)",
+                    dtick=1, title="Hour of Day",
                     showgrid=False, zeroline=False,
                 ),
                 yaxis=dict(showgrid=False, zeroline=False, autorange="reversed"),
@@ -984,12 +991,12 @@ with tab_journey:
     iteration_data = DATA.get("daily_iteration", [])
     iteration_f = filter_by_range(iteration_data, DAYS) if iteration_data else []
     if iteration_f:
-        st.markdown("**Iteration Efficiency Trend** (daily correction rate)")
+        st.markdown("**Correction Rate Over Time** (% of prompts that were corrections)")
         fig_iter = go.Figure()
         fig_iter.add_trace(go.Scatter(
             x=[r["d"] for r in iteration_f],
             y=[r["correction_pct"] for r in iteration_f],
-            name="Correction %",
+            name="Corrections",
             line=dict(color=COLORS["rose"], width=2),
             fill="tozeroy",
             fillcolor="rgba(251,113,133,0.08)",
@@ -1003,7 +1010,7 @@ with tab_journey:
         ))
         fig_iter.update_layout(
             height=300,
-            yaxis=dict(title="Correction %", side="left", range=[0, 50]),
+            yaxis=dict(title="Corrections", side="left", range=[0, 50]),
             yaxis2=dict(
                 title="Prompts", side="right", overlaying="y",
                 showgrid=False,
@@ -1047,7 +1054,7 @@ with tab_journey:
                 "Project": html.escape(s["project"]),
                 "Started": s.get("started", "—") or "—",
                 "Prompts": s["prompts"],
-                "AI Responses": s["turns"],
+                "Replies": s["turns"],
                 "Tokens": fmt_tokens(s["tokens"]),
                 "Top Tools": tools_str,
             })
@@ -1063,7 +1070,7 @@ with tab_insights:
             st.metric(
                 "Correction Cost",
                 f'${corr_cost.get("cost", 0):.2f}',
-                help="Estimated tokens spent on AI responses following correction prompts",
+                help="Cost of replies after corrections ('no', 'wrong', 'try again')",
             )
         with col_i2:
             st.metric(
@@ -1149,8 +1156,8 @@ with tab_insights:
             st.markdown(f"**Cheapest Sessions** ({top['count']} sessions)")
             bw_metrics = {
                 "Avg Prompt Length": f'{top["avg_prompt_length"]:.0f} chars',
-                "Avg AI Responses": f'{top["avg_turns"]:.1f}',
-                "Tool Diversity": f'{top["avg_tool_diversity"]:.1f}',
+                "Avg Back-and-Forths": f'{top["avg_turns"]:.1f}',
+                "Tools Used": f'{top["avg_tool_diversity"]:.1f}',
                 "Correction Rate": f'{top["correction_rate"]:.1f}%',
                 "Read-before-Edit": f'{top["read_before_edit_pct"]:.0f}%',
                 "Avg Cost": f'${top["avg_cost"]:.2f}',
@@ -1164,8 +1171,8 @@ with tab_insights:
             st.markdown(f"**Costliest Sessions** ({bot['count']} sessions)")
             bw_metrics_b = {
                 "Avg Prompt Length": f'{bot["avg_prompt_length"]:.0f} chars',
-                "Avg AI Responses": f'{bot["avg_turns"]:.1f}',
-                "Tool Diversity": f'{bot["avg_tool_diversity"]:.1f}',
+                "Avg Back-and-Forths": f'{bot["avg_turns"]:.1f}',
+                "Tools Used": f'{bot["avg_tool_diversity"]:.1f}',
                 "Correction Rate": f'{bot["correction_rate"]:.1f}%',
                 "Read-before-Edit": f'{bot["read_before_edit_pct"]:.0f}%',
                 "Avg Cost": f'${bot["avg_cost"]:.2f}',
@@ -1300,9 +1307,8 @@ with tab_insights:
                 "Project": es["project"],
                 "Cost": f'${es["cost"]:.2f}',
                 "Prompts": es["prompts"],
-                "Corrections": es["corrections"],
-                "Correction %": f'{es["correction_rate"]:.1f}%',
-                "AI Responses": es["ai_responses"],
+                "Corrections": f'{es["corrections"]} ({es["correction_rate"]:.1f}%)',
+                "Replies": es["ai_responses"],
                 "Tools Used": es["tools"],
                 "Model": es["model"],
             })
@@ -1372,8 +1378,8 @@ with tab_insights:
                 "Branch": bc["branch"],
                 "Sessions": bc["sessions"],
                 "Prompts": bc["prompts"],
-                "Correction %": f'{bc["correction_rate"]:.1f}%',
-                "Est. Cost": f'${bc["est_cost"]:.2f}',
+                "Corrections": f'{bc["correction_rate"]:.1f}%',
+                "Estimated Cost": f'${bc["est_cost"]:.2f}',
             })
         st.dataframe(br_table, width="stretch", hide_index=True)
 
