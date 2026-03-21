@@ -7,19 +7,16 @@ can filter by arbitrary date ranges (7d, 30d, 90d, all) client-side.
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 from datetime import datetime
 
 from .db import query_all_projects, query_project_stats, query_scoring_data, query_trend_data
 from .models import MODEL_PRICING, ScoringData
+from .patterns import CORRECTION_RE as _CORRECTION_PATTERNS
+from .patterns import CORRECTION_RE as _CORRECTION_RE
+from .patterns import FILE_REF_RE as _FILE_REF_RE
+from .patterns import SLASH_CMD_RE as _SLASH_CMD_RE
 from .scorer import compute_project_scores, compute_score, compute_trend
-
-# Lightweight correction detection for daily iteration signals
-_CORRECTION_RE = re.compile(
-    r"(?i)^(?:no[,.\s]|not that|wrong|try again|undo|revert|actually[,\s]|I meant|"
-    r"that's not|don'?t |stop |wait[,.\s]|instead[,.\s]|I said )",
-)
 
 
 def _estimate_cost(
@@ -214,9 +211,6 @@ def _compute_weekly_digest(
     )
 
     # Correction rate this week vs last week
-    # Uses the scorer's correction pattern regex on prompt text
-    from .scorer import _CORRECTION_PATTERNS
-
     tw_prompts_total = this_week[0] or 0
     lw_prompts_total = last_week[0] or 0
 
@@ -287,8 +281,6 @@ def _compute_prompt_learning(cur: sqlite3.Cursor) -> list[dict]:
         FROM prompts ORDER BY session_id, timestamp
     """)
     rows = list(cur.fetchall())
-
-    from .scorer import _CORRECTION_PATTERNS, _FILE_REF_RE, _SLASH_CMD_RE
 
     # Group prompts by session, detect which are followed by corrections
     sessions: dict[str, list[tuple[str, int, bool]]] = {}
@@ -755,7 +747,6 @@ def generate_dashboard_data(
              FROM turns t WHERE t.session_id = p.session_id) as session_tokens
         FROM prompts p
     """)
-    from .scorer import _FILE_REF_RE, _SLASH_CMD_RE
 
     # Track (session_id, tokens) per pattern to deduplicate session tokens
     pattern_buckets: dict[str, list[tuple[str, int]]] = {

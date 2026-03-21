@@ -158,7 +158,7 @@ class TestComputeScore:
         insert_turns(db_conn, sample_turns)
         data = query_scoring_data(db_conn, project="project-alpha")
         score = compute_score(data)
-        assert score.overall >= 0
+        assert 0 <= score.overall <= 100
 
     def test_recommendations_populated(self, db_conn, sample_prompts, sample_turns):
         insert_prompts(db_conn, sample_prompts)
@@ -317,7 +317,7 @@ class TestScoreWithDiverseData:
         score = compute_score(data)
         quality_dim = next(d for d in score.dimensions if d.name == "Prompt Quality")
         # Slash commands should not drag score down as much
-        assert quality_dim.score >= 0  # Not penalised to zero
+        assert quality_dim.score >= 20  # Slash cmds are valid short prompts
 
 
 class TestScoreWithPureData:

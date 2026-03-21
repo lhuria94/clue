@@ -18,7 +18,10 @@ def get_available_repos(cwds: list[str]) -> list[str]:
     for cwd in cwds:
         if not cwd:
             continue
-        path = Path(cwd)
+        validated = _validate_cwd(cwd)
+        if validated is None:
+            continue
+        path = validated
         for parent in [path, *list(path.parents)]:
             git_dir = parent / ".git"
             if git_dir.exists():
@@ -28,6 +31,15 @@ def get_available_repos(cwds: list[str]) -> list[str]:
                     repos.append(root)
                 break
     return repos
+
+
+def _validate_cwd(cwd: str) -> Path | None:
+    """Validate cwd is an existing directory. Returns Path or None."""
+    try:
+        p = Path(cwd).resolve()
+        return p if p.is_dir() else None
+    except (ValueError, OSError):
+        return None
 
 
 def get_commits_in_range(
@@ -41,10 +53,13 @@ def get_commits_in_range(
     Returns list of {"sha": str, "timestamp": str, "message": str} dicts.
     Empty list on any error.
     """
+    validated = _validate_cwd(cwd)
+    if validated is None:
+        return []
     try:
         result = subprocess.run(
             [
-                "git", "-C", cwd, "log",
+                "git", "-C", str(validated), "log",
                 f"--after={after}",
                 f"--before={before}",
                 "--format=%H|%aI|%s",

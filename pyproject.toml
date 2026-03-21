@@ -60,13 +60,25 @@ known-first-party = ["clue"]
 root_packages = ["clue"]
 
 [[tool.importlinter.contracts]]
+name = "patterns has no internal imports"
+type = "forbidden"
+source_modules = ["clue.patterns"]
+forbidden_modules = [
+    "clue.db", "clue.extractor", "clue.scorer", "clue.export",
+    "clue.cli", "clue.models", "clue.pipeline", "clue.dashboard",
+]
+
+[[tool.importlinter.contracts]]
 name = "models has no internal imports"
 type = "forbidden"
 source_modules = ["clue.models"]
-forbidden_modules = ["clue.db", "clue.extractor", "clue.scorer", "clue.export", "clue.cli"]
+forbidden_modules = [
+    "clue.db", "clue.extractor", "clue.scorer", "clue.export",
+    "clue.cli", "clue.patterns",
+]
 
 [[tool.importlinter.contracts]]
-name = "scorer does not depend on infrastructure"
+name = "scorer depends only on models and patterns"
 type = "forbidden"
 source_modules = ["clue.scorer"]
 forbidden_modules = ["clue.db", "clue.export", "clue.cli", "clue.extractor"]
@@ -75,23 +87,19 @@ forbidden_modules = ["clue.db", "clue.export", "clue.cli", "clue.extractor"]
 name = "db does not depend on export or cli"
 type = "forbidden"
 source_modules = ["clue.db"]
-forbidden_modules = ["clue.export", "clue.cli", "clue.extractor"]
+forbidden_modules = ["clue.export", "clue.cli", "clue.extractor", "clue.scorer"]
 
 [[tool.importlinter.contracts]]
 name = "extractor does not depend on export or cli"
 type = "forbidden"
 source_modules = ["clue.extractor"]
-forbidden_modules = ["clue.export", "clue.cli", "clue.scorer"]
+forbidden_modules = ["clue.export", "clue.cli", "clue.scorer", "clue.patterns"]
 
 [[tool.importlinter.contracts]]
 name = "dashboard does not depend on cli"
 type = "forbidden"
 source_modules = ["clue.dashboard"]
 forbidden_modules = ["clue.cli"]
-ignore_imports = [
-    "clue.pipeline -> clue.extractor",
-    "clue.export -> clue.scorer",
-]
 
 [[tool.importlinter.contracts]]
 name = "pipeline does not depend on cli or dashboard"
@@ -106,4 +114,5 @@ source_modules = ["clue.git_utils"]
 forbidden_modules = [
     "clue.db", "clue.extractor", "clue.scorer", "clue.export",
     "clue.cli", "clue.models", "clue.pipeline", "clue.dashboard",
+    "clue.patterns",
 ]

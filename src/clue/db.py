@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import re
 import sqlite3
 from pathlib import Path
 
@@ -18,18 +17,8 @@ from .models import (
     TokenUsage,
     TrendData,
 )
-
-_CORRECTION_RE = re.compile(
-    r"(?i)^(?:no[,.\s]|not that|wrong|try again|undo|revert|actually[,\s]|I meant|"
-    r"that's not|don'?t |stop |wait[,.\s]|instead[,.\s]|I said )",
-)
-_FILE_REF_RE = re.compile(
-    r"(?:"
-    r"[\w./\\-]+\.(?:py|js|ts|tsx|jsx|java|kt|go|rs|rb|php|c|cpp|h|cs|swift|r|scala|lua|pl|ex|exs|hs|elm|vue|svelte|css|scss|less|html|xml|yml|yaml|toml|json|md|sh|bash|zsh|sql|tf|hcl|proto|graphql|dockerfile)"
-    r"|line\s+\d+"
-    r"|:\d+(?::\d+)?"
-    r")"
-)
+from .patterns import CORRECTION_RE as _CORRECTION_RE
+from .patterns import FILE_REF_RE as _FILE_REF_RE
 
 DEFAULT_DB_PATH = Path.home() / ".claude" / "usage.db"
 

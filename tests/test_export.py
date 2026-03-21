@@ -65,11 +65,10 @@ class TestGenerateDashboardData:
         data = generate_dashboard_data(db_conn)
 
         score = data["efficiency_score"]
-        assert "overall" in score
-        assert "grade" in score
-        assert "dimensions" in score
-        assert "top_recommendations" in score
+        assert 0 <= score["overall"] <= 100
+        assert score["grade"] in ("A", "B", "C", "D", "F")
         assert len(score["dimensions"]) == 7
+        assert isinstance(score["top_recommendations"], list)
 
     def test_project_scores_included(self, db_conn, sample_prompts, sample_turns):
         insert_prompts(db_conn, sample_prompts)
@@ -127,8 +126,8 @@ class TestGenerateDashboardData:
         data = generate_dashboard_data(db_conn)
         assert "daily_agentic" in data
         assert "agentic_cost_split" in data
-        assert "agent" in data["agentic_cost_split"]
-        assert "main" in data["agentic_cost_split"]
+        assert data["agentic_cost_split"]["agent"] >= 0
+        assert data["agentic_cost_split"]["main"] >= 0
 
     def test_project_cost_efficiency_present(self, db_conn, sample_prompts, sample_turns):
         insert_prompts(db_conn, sample_prompts)
@@ -143,9 +142,9 @@ class TestGenerateDashboardData:
         data = generate_dashboard_data(db_conn)
         assert "correction_cost" in data
         cc = data["correction_cost"]
-        assert "cost" in cc
-        assert "pct" in cc
-        assert "sessions" in cc
+        assert cc["cost"] >= 0
+        assert 0 <= cc["pct"] <= 100
+        assert cc["sessions"] >= 0
 
     def test_prompt_pattern_stats_present(self, db_conn, sample_prompts, sample_turns):
         insert_prompts(db_conn, sample_prompts)
@@ -155,9 +154,9 @@ class TestGenerateDashboardData:
         assert isinstance(data["prompt_pattern_stats"], list)
         if data["prompt_pattern_stats"]:
             ps = data["prompt_pattern_stats"][0]
-            assert "pattern" in ps
-            assert "count" in ps
-            assert "avg_session_tokens" in ps
+            assert isinstance(ps["pattern"], str)
+            assert ps["count"] > 0
+            assert ps["avg_session_tokens"] >= 0
 
     def test_git_correlation_disabled_by_default(self, db_conn, sample_prompts, sample_turns):
         insert_prompts(db_conn, sample_prompts)

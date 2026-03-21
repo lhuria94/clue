@@ -271,7 +271,7 @@ with col_hdr:
 with col_meta:
     meta_parts = []
     if ts_str:
-        meta_parts.append(f"Updated {ts_str}")
+        meta_parts.append(f"Updated {html.escape(ts_str)}")
     meta_parts.append("Auto-refreshes every 2 min")
     st.markdown(
         f'<div style="text-align:right;font-size:0.85rem;opacity:0.5">'

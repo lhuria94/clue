@@ -15,34 +15,14 @@ and returns pure domain objects. All SQL lives in db.py.
 
 from __future__ import annotations
 
-import re
-
 from .models import DimensionScore, EfficiencyScore, ProjectScore, ScoringData, TrendData
+from .patterns import CONFIRMATION_RE, CORRECTION_RE, FILE_REF_RE, SLASH_CMD_RE
 
-# --- Prompt semantic analysis helpers ---
-
-# Patterns that indicate high-quality short prompts (slash commands, skills)
-_SLASH_CMD_RE = re.compile(r"^/\w+")
-
-# File/path references — indicates specificity
-_FILE_REF_RE = re.compile(
-    r"(?:"
-    r"[\w./\\-]+\.(?:py|js|ts|tsx|jsx|java|kt|go|rs|rb|php|c|cpp|h|cs|swift|r|scala|lua|pl|ex|exs|hs|elm|vue|svelte|css|scss|less|html|xml|yml|yaml|toml|json|md|sh|bash|zsh|sql|tf|hcl|proto|graphql|dockerfile)"
-    r"|line\s+\d+"
-    r"|:\d+(?::\d+)?"
-    r")"
-)
-
-# Correction/rephrase patterns — indicates the previous prompt wasn't clear enough
-_CORRECTION_PATTERNS = re.compile(
-    r"(?i)^(?:no[,.\s]|not that|wrong|try again|undo|revert|actually[,\s]|I meant|"
-    r"that's not|don'?t |stop |wait[,.\s]|instead[,.\s]|I said )",
-)
-
-# Confirmation patterns — low-effort responses (reduce quality score)
-_CONFIRMATION_RE = re.compile(
-    r"^(?:yes|ok|sure|y|yep|yeah|go|do it|proceed|continue|confirm)$", re.I
-)
+# Backward-compatible aliases for consumers that import private names
+_SLASH_CMD_RE = SLASH_CMD_RE
+_FILE_REF_RE = FILE_REF_RE
+_CORRECTION_PATTERNS = CORRECTION_RE
+_CONFIRMATION_RE = CONFIRMATION_RE
 
 
 def _analyse_prompt_texts(texts: list[str]) -> dict:
