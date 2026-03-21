@@ -1,6 +1,6 @@
 # Clue
 
-**C**laude **L**ine **U**sage **E**fficiency — AI efficiency scoring and telemetry dashboard for [Claude Code](https://claude.com/claude-code).
+**C**laude **U**sage **E**fficiency — AI efficiency scoring and telemetry dashboard for [Claude Code](https://claude.com/claude-code).
 
 Get scored 0-100 on how efficiently you use AI. Track tokens, costs, tool usage across every project. Receive actionable recommendations. Share anonymised metrics with your team.
 

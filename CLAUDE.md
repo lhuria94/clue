@@ -14,7 +14,7 @@ Without Taskfile: `.venv/bin/pytest tests/ -v`
 
 ## Package
 
-- Name: `clue` (**C**laude **L**ine **U**sage **E**fficiency)
+- Name: `clue` (**C**laude **U**sage **E**fficiency)
 - Entry point: `python -m clue` or `clue` CLI
 - Source: `src/clue/`
 - Tests: `tests/`
