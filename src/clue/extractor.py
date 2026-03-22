@@ -39,8 +39,8 @@ def _short_project(path: str) -> str:
 def _project_from_dir_name(dir_name: str) -> str:
     """Decode Claude's encoded directory name to the actual project name.
 
-    Claude encodes ``/Users/alice.smith/workspace/my-app`` as
-    ``-Users-alice.smith-workspace-my-app`` (``/`` → ``-``).  The
+    Claude encodes ``/Users/alice/workspace/my-app`` as
+    ``-Users-alice-workspace-my-app`` (``/`` → ``-``).  The
     encoding is ambiguous because ``-`` appears both as the path
     separator and within directory names.
 

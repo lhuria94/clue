@@ -1069,7 +1069,25 @@ def generate_dashboard_data(
         result["git_repos_total"] = total_projects
 
     if scrub:
+        # Remove anything that could identify the user, their projects, or branches
         result.pop("prompt_lengths", None)
         result.pop("daily_iteration", None)
+        result.pop("branch_usage", None)
+        result.pop("branch_coaching", None)
+        result.pop("session_summaries", None)
+        result.pop("expensive_sessions", None)
+        result.pop("prompt_learning", None)
+        result.pop("session_outcomes", None)
+        result.pop("time_to_value", None)
+
+        # Strip project names from per-project data (keep aggregated metrics)
+        for entry in result.get("daily_project", []):
+            entry["p"] = "project"
+        for entry in result.get("daily_project_tokens", []):
+            entry["p"] = "project"
+        for ps in result.get("project_scores", []):
+            ps["project"] = "project"
+        for pce in result.get("project_cost_efficiency", []):
+            pce["project"] = "project"
 
     return result

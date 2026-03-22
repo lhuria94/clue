@@ -31,6 +31,9 @@ Thumbs.db
 
 # Project-specific
 *.db
+*.jsonl
 data.json
+clue-data.json
+*-dashboard-data.json
 .env
 .mise.local.toml
