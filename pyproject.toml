@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Love Huria" }]
-dependencies = ["streamlit>=1.45", "plotly>=6.0"]
+dependencies = ["streamlit>=1.45,<2.0", "plotly>=6.0,<7.0"]
 
 [project.optional-dependencies]
 test = ["pytest>=8.0", "pytest-cov>=6.0"]
