@@ -13,7 +13,7 @@ Python 3.10+. SQLite for storage. Streamlit + Plotly dashboard.
 ### Option A: mise + uv (recommended for developers)
 
 ```bash
-git clone <repo-url> && cd clue
+git clone https://github.com/lhuria94/clue.git && cd clue
 mise install          # installs Python 3.14 + uv
 uv sync --group dev   # reproducible install from lockfile
 task setup            # test + extract + hook + doctor
@@ -24,14 +24,14 @@ Requires [mise](https://mise.jdx.dev) (`curl https://mise.jdx.dev/install.sh | s
 ### Option B: macOS / Linux (no prerequisites beyond Python)
 
 ```bash
-git clone <repo-url> && cd clue && ./setup.sh
+git clone https://github.com/lhuria94/clue.git && cd clue && ./setup.sh
 ```
 
 ### Option C: Windows (PowerShell)
 
 ```powershell
 # If needed first: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-git clone <repo-url>; cd clue; .\setup.ps1
+git clone https://github.com/lhuria94/clue.git; cd clue; .\setup.ps1
 ```
 
 ### What setup does
