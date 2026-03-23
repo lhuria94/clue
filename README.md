@@ -80,7 +80,7 @@ git clone https://github.com/lhuria94/clue.git; cd clue; .\setup.ps1
 | **Hook** | Claude Code PostStop | Fires after every session. Runs incremental extract in background. Zero config after setup |
 | **Team sharing** | JSON export + merge | Each user exports locally. Merge command combines. No shared infrastructure |
 | **Privacy** | `--scrub` flag | Strips all prompt text from exports. Aggregated metrics only. No absolute paths in dashboard |
-| **Tests** | pytest | 180 tests across unit, integration, security, and CLI layers |
+| **Tests** | pytest | 186 tests across unit, integration, security, and CLI layers |
 | **Task runner** | Taskfile (optional) | Shortcuts for common operations. Falls back to `python -m clue` if not installed |
 | **Cross-platform** | `pathlib` + platform detection | Windows backslash path encoding, PowerShell setup script, platform-aware doctor |
 
@@ -308,7 +308,7 @@ task test-unit      # Unit tests only
 task test-integration # Integration + security tests
 ```
 
-**180 tests** across 4 layers:
+**186 tests** across 4 layers:
 
 | Layer | Files | What it covers |
 |---|---|---|
@@ -325,9 +325,11 @@ Approximate pricing based on public Anthropic rates:
 
 | Model | Input | Output | Cache Write | Cache Read |
 |---|---|---|---|---|
-| Opus 4.6 | $15/M | $75/M | $18.75/M | $1.50/M |
+| Opus 4.6 | $5/M | $25/M | $6.25/M | $0.50/M |
 | Sonnet 4.6 | $3/M | $15/M | $3.75/M | $0.30/M |
-| Haiku 4.5 | $0.80/M | $4/M | $1.00/M | $0.08/M |
+| Haiku 4.5 | $1/M | $5/M | $1.25/M | $0.10/M |
+
+For details on how tokens are counted, costs are estimated, and known data limitations, see [docs/data-accuracy.md](docs/data-accuracy.md).
 
 ---
 

@@ -91,9 +91,10 @@ def cmd_merge(args: argparse.Namespace) -> None:
 
         merged["users"].append(data.get("user_label", path.stem))
 
-        # Merge overview (sum)
+        # Merge overview (sum counts only; skip computed rates/averages)
+        _NON_SUMMABLE = {"avg_prompt_length_chars", "cache_hit_rate_pct"}
         for key in merged["overview"]:
-            if isinstance(merged["overview"][key], (int, float)):
+            if isinstance(merged["overview"][key], (int, float)) and key not in _NON_SUMMABLE:
                 merged["overview"][key] += data["overview"].get(key, 0)
 
         # Merge lists (concatenate + deduplicate where possible)
@@ -129,6 +130,18 @@ def cmd_merge(args: argparse.Namespace) -> None:
                         existing[key]["count"] = existing[key].get("count", 0) + item.get(
                             "count", 0
                         )
+
+    # Recalculate derived overview fields after merge
+    ov = merged.get("overview", {})
+    total_prompts = ov.get("total_prompts", 0)
+    total_chars = sum(r.get("l", 0) for r in merged.get("prompt_lengths", []))
+    ov["avg_prompt_length_chars"] = round(total_chars / max(total_prompts, 1), 1)
+    # cache_hit_rate = cache_read / (cache_create + cache_read) — recompute from daily_tokens
+    dt = merged.get("daily_tokens", [])
+    total_cr = sum(r.get("cr", 0) for r in dt)
+    total_cw = sum(r.get("cw", 0) for r in dt)
+    cache_total = total_cr + total_cw
+    ov["cache_hit_rate_pct"] = round(total_cr / cache_total * 100, 1) if cache_total > 0 else 0.0
 
     output = Path(args.output)
     output.write_text(json.dumps(merged, indent=2))

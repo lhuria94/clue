@@ -176,38 +176,38 @@ def _compute_weekly_digest(
     )
     last_week = cur.fetchone()
 
-    # This week cost
+    # This week cost (per-model)
     cur.execute(
         """
-        SELECT SUM(input_tokens), SUM(output_tokens),
+        SELECT COALESCE(model, '_default'),
+            SUM(input_tokens), SUM(output_tokens),
             SUM(cache_creation_tokens), SUM(cache_read_tokens)
         FROM turns WHERE SUBSTR(timestamp, 1, 10) > date(?, '-7 days')
+        GROUP BY COALESCE(model, '_default')
     """,
         (today,),
     )
-    tw_tokens = cur.fetchone()
-    tw_cost = _estimate_cost(
-        "_default",
-        tw_tokens[0] or 0, tw_tokens[1] or 0,
-        tw_tokens[2] or 0, tw_tokens[3] or 0,
+    tw_cost = sum(
+        _estimate_cost(r[0], r[1] or 0, r[2] or 0, r[3] or 0, r[4] or 0)
+        for r in cur.fetchall()
     )
 
-    # Last week cost
+    # Last week cost (per-model)
     cur.execute(
         """
-        SELECT SUM(input_tokens), SUM(output_tokens),
+        SELECT COALESCE(model, '_default'),
+            SUM(input_tokens), SUM(output_tokens),
             SUM(cache_creation_tokens), SUM(cache_read_tokens)
         FROM turns
         WHERE SUBSTR(timestamp, 1, 10) > date(?, '-14 days')
             AND SUBSTR(timestamp, 1, 10) <= date(?, '-7 days')
+        GROUP BY COALESCE(model, '_default')
     """,
         (today, today),
     )
-    lw_tokens = cur.fetchone()
-    lw_cost = _estimate_cost(
-        "_default",
-        lw_tokens[0] or 0, lw_tokens[1] or 0,
-        lw_tokens[2] or 0, lw_tokens[3] or 0,
+    lw_cost = sum(
+        _estimate_cost(r[0], r[1] or 0, r[2] or 0, r[3] or 0, r[4] or 0)
+        for r in cur.fetchall()
     )
 
     # Correction rate this week vs last week
@@ -370,10 +370,16 @@ def generate_dashboard_data(
     cur.execute("SELECT COUNT(*) FROM prompts")
     total_prompts = cur.fetchone()[0]
 
-    cur.execute("SELECT COUNT(DISTINCT session_id) FROM prompts")
+    cur.execute("SELECT COUNT(*) FROM sessions WHERE prompt_count > 0 OR turn_count > 0")
     total_sessions = cur.fetchone()[0]
 
-    cur.execute("SELECT COUNT(DISTINCT project) FROM prompts")
+    cur.execute("""
+        SELECT COUNT(DISTINCT project) FROM (
+            SELECT project FROM prompts
+            UNION
+            SELECT project FROM turns WHERE project IS NOT NULL
+        )
+    """)
     total_projects = cur.fetchone()[0]
 
     cur.execute(
@@ -399,11 +405,29 @@ def generate_dashboard_data(
     cache_hit_rate = round(total_cache_read / cache_total * 100, 1) if cache_total > 0 else 0
 
     # --- Daily activity (prompts + sessions per day) ---
+    # Prompts come from history.jsonl (may not capture all sessions).
+    # Session counts come from turns table which has complete coverage.
     cur.execute("""
-        SELECT date, COUNT(*) as prompts, COUNT(DISTINCT session_id) as sessions
-        FROM prompts GROUP BY date ORDER BY date
+        SELECT date, COUNT(*) as prompts FROM prompts GROUP BY date
     """)
-    daily_usage = [{"d": r[0], "p": r[1], "s": r[2]} for r in cur.fetchall()]
+    daily_prompts_map = {r[0]: r[1] for r in cur.fetchall()}
+
+    cur.execute("""
+        SELECT SUBSTR(timestamp, 1, 10) as date, COUNT(DISTINCT session_id) as sessions
+        FROM turns WHERE timestamp IS NOT NULL AND timestamp != ''
+        GROUP BY date
+    """)
+    daily_sessions_map = {r[0]: r[1] for r in cur.fetchall() if r[0]}
+
+    all_dates = sorted(set(daily_prompts_map) | set(daily_sessions_map))
+    daily_usage = [
+        {
+            "d": d,
+            "p": daily_prompts_map.get(d, 0),
+            "s": daily_sessions_map.get(d, 0),
+        }
+        for d in all_dates
+    ]
 
     # --- Daily tokens ---
     cur.execute("""
@@ -517,14 +541,27 @@ def generate_dashboard_data(
     per_project_stats = {p: query_project_stats(conn, p) for p in projects}
     project_scores = compute_project_scores(projects, per_project_data, per_project_stats)
 
-    # --- Git branch ---
+    # --- Git branch with most-used project per branch ---
     cur.execute("""
-        SELECT git_branch, COUNT(*), SUM(output_tokens)
-        FROM turns WHERE git_branch IS NOT NULL AND git_branch != '' AND git_branch != 'HEAD'
-        GROUP BY git_branch ORDER BY 2 DESC LIMIT 20
+        SELECT b.git_branch, b.cnt, b.out_tokens, (
+            SELECT t2.project FROM turns t2
+            WHERE t2.git_branch = b.git_branch
+            GROUP BY t2.project ORDER BY COUNT(*) DESC LIMIT 1
+        ) as top_project
+        FROM (
+            SELECT git_branch, COUNT(*) as cnt, SUM(output_tokens) as out_tokens
+            FROM turns
+            WHERE git_branch IS NOT NULL AND git_branch != '' AND git_branch != 'HEAD'
+            GROUP BY git_branch
+            ORDER BY cnt DESC LIMIT 20
+        ) b
     """)
     branch_usage = [
-        {"branch": r[0], "turns": r[1], "output_tokens": r[2] or 0} for r in cur.fetchall()
+        {
+            "branch": r[0], "turns": r[1],
+            "output_tokens": r[2] or 0, "project": r[3] or "",
+        }
+        for r in cur.fetchall()
     ]
 
     # --- Journey: Session summaries (most recent 100) ---
@@ -599,19 +636,23 @@ def generate_dashboard_data(
     active_dates = sorted({r["d"] for r in daily_usage})
     streak = 0
     if active_dates:
-        from datetime import date as date_cls
+        from datetime import date as date_cls, timedelta
 
         today = date_cls.today()
         parsed = [date_cls.fromisoformat(d) for d in active_dates]
-        # Count consecutive days ending at or near today
-        current_streak = 0
-        for d in reversed(parsed):
-            diff = (today - d).days
-            if diff <= current_streak + 1:
-                current_streak += 1
-            else:
-                break
-        streak = current_streak
+        # Count consecutive days ending at most recent active day
+        # (only counts as "current" streak if last active day is today or yesterday)
+        last_active = parsed[-1]
+        if (today - last_active).days > 1:
+            streak = 0
+        else:
+            current_streak = 1  # last_active day itself
+            for d in reversed(parsed[:-1]):
+                if d == last_active - timedelta(days=current_streak):
+                    current_streak += 1
+                else:
+                    break
+            streak = current_streak
 
     # --- Feature 3: Stop reason analysis (exact data from turns.stop_reason) ---
     cur.execute("""
@@ -666,24 +707,44 @@ def generate_dashboard_data(
     }
 
     # --- Feature 2: Per-project cost efficiency ---
+    # Session counts per (date, project) — independent of model splits
     cur.execute("""
         SELECT SUBSTR(t.timestamp, 1, 10) as date, t.project,
-            COUNT(DISTINCT t.session_id) as sessions,
+            COUNT(DISTINCT t.session_id) as sessions
+        FROM turns t
+        WHERE t.timestamp IS NOT NULL AND t.timestamp != ''
+        GROUP BY date, t.project
+    """)
+    pce_sessions: dict[tuple[str, str], int] = {}
+    for r in cur.fetchall():
+        if r[0]:
+            pce_sessions[(r[0], r[1])] = r[2]
+
+    # Cost per (date, project) grouped by model for accurate pricing
+    cur.execute("""
+        SELECT SUBSTR(t.timestamp, 1, 10) as date, t.project, t.model,
             SUM(t.input_tokens), SUM(t.output_tokens),
             SUM(t.cache_creation_tokens), SUM(t.cache_read_tokens)
         FROM turns t
         WHERE t.timestamp IS NOT NULL AND t.timestamp != '' AND t.model IS NOT NULL
-        GROUP BY date, t.project ORDER BY date
+        GROUP BY date, t.project, t.model ORDER BY date
     """)
-    project_cost_efficiency = []
+    pce_cost_map: dict[tuple[str, str], float] = {}
     for r in cur.fetchall():
-        if r[0] and r[2] > 0:
-            cost = _estimate_cost("_default", r[3] or 0, r[4] or 0, r[5] or 0, r[6] or 0)
-            project_cost_efficiency.append({
-                "d": r[0], "pj": r[1], "sessions": r[2],
-                "cost": round(cost, 4),
-                "cps": round(cost / r[2], 4),  # cost per session
-            })
+        if not r[0]:
+            continue
+        cost = _estimate_cost(r[2], r[3] or 0, r[4] or 0, r[5] or 0, r[6] or 0)
+        key = (r[0], r[1])
+        pce_cost_map[key] = pce_cost_map.get(key, 0.0) + cost
+
+    project_cost_efficiency = []
+    for key, cost in pce_cost_map.items():
+        sessions = pce_sessions.get(key, 1)
+        cost_r = round(cost, 4)
+        project_cost_efficiency.append({
+            "d": key[0], "pj": key[1], "sessions": sessions,
+            "cost": cost_r, "cps": round(cost_r / max(sessions, 1), 4),
+        })
 
     # --- Feature 8: Correction cost (accurate — tokens in turns following corrections) ---
     # For each session, find prompts that match correction pattern, then sum the tokens
@@ -830,23 +891,42 @@ def generate_dashboard_data(
         })
 
     # --- Branch coaching (correction rate + cost per branch) ---
+    # Session counts per branch — independent of model splits
     cur.execute("""
-        SELECT t.git_branch,
-            COUNT(DISTINCT t.session_id) as sessions,
+        SELECT t.git_branch, COUNT(DISTINCT t.session_id) as sessions
+        FROM turns t
+        WHERE t.git_branch IS NOT NULL AND t.git_branch != ''
+            AND t.git_branch != 'HEAD'
+        GROUP BY t.git_branch
+    """)
+    branch_session_map: dict[str, int] = {r[0]: r[1] for r in cur.fetchall()}
+
+    # Cost per branch grouped by model for accurate pricing
+    cur.execute("""
+        SELECT t.git_branch, t.model,
             COALESCE(SUM(t.input_tokens), 0) as input_tokens,
             COALESCE(SUM(t.output_tokens), 0) as output_tokens,
             COALESCE(SUM(t.cache_creation_tokens), 0) as cache_create,
             COALESCE(SUM(t.cache_read_tokens), 0) as cache_read
         FROM turns t
         WHERE t.git_branch IS NOT NULL AND t.git_branch != ''
-            AND t.git_branch != 'HEAD'
-        GROUP BY t.git_branch ORDER BY 2 DESC LIMIT 20
+            AND t.git_branch != 'HEAD' AND t.model IS NOT NULL
+        GROUP BY t.git_branch, t.model
     """)
-    branch_rows = cur.fetchall()
+    branch_cost_map: dict[str, dict] = {}
+    for br, model, in_t, out_t, cw_t, cr_t in cur.fetchall():
+        cost = _estimate_cost(model, in_t, out_t, cw_t, cr_t)
+        if br not in branch_cost_map:
+            branch_cost_map[br] = {"sessions": branch_session_map.get(br, 1), "cost": 0.0}
+        branch_cost_map[br]["cost"] += cost
+
+    # Take top 20 branches by session count
+    top_branches = sorted(branch_cost_map.items(), key=lambda x: x[1]["sessions"], reverse=True)[
+        :20
+    ]
 
     branch_coaching = []
-    for br, sess_count, in_tokens, out_tokens, cache_cr, cache_rd in branch_rows:
-        # Get prompts for this branch's sessions
+    for br, br_data in top_branches:
         cur.execute("""
             SELECT p.text FROM prompts p
             WHERE p.session_id IN (
@@ -859,15 +939,12 @@ def generate_dashboard_data(
         br_corr = sum(
             1 for t in branch_prompts if _CORRECTION_RE.match(t.strip())
         )
-        br_cost = _estimate_cost(
-            "_default", in_tokens, out_tokens, cache_cr, cache_rd
-        )
         branch_coaching.append({
             "branch": br,
-            "sessions": sess_count,
+            "sessions": br_data["sessions"],
             "prompts": br_total,
             "correction_rate": round(br_corr / max(br_total, 1) * 100, 1),
-            "est_cost": round(br_cost, 2),
+            "est_cost": round(br_data["cost"], 2),
         })
 
     result = {

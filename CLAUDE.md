@@ -3,7 +3,7 @@
 ## Quick Reference
 
 ```bash
-task test               # Run 180 tests with 87% coverage ratchet
+task test               # Run 186 tests with 87% coverage ratchet
 task lint               # Ruff lint
 task lint-imports       # Import-linter architecture check
 task check              # All three above

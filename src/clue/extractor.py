@@ -163,9 +163,25 @@ def _parse_conversation_file(
     project: str,
     is_subagent: bool = False,
 ) -> list[ConversationTurn]:
-    """Parse a single conversation JSONL file with all available fields."""
+    """Parse a single conversation JSONL file with all available fields.
+
+    Claude Code streams responses as multiple JSONL entries per API call —
+    one per content block (thinking, text, tool_use).  All entries from the
+    same API call share the same ``message.id`` + ``requestId`` pair.
+    Token usage is cumulative: the last entry per API call carries the full
+    totals.  We deduplicate by collecting all entries, grouping by API-call
+    hash, and emitting one turn per unique hash with the final usage.
+    """
     turns: list[ConversationTurn] = []
     session_id = path.stem
+
+    # First pass: collect raw entries, grouping assistant messages by API-call
+    # hash so we can deduplicate streaming chunks.
+    user_entries: list[dict] = []
+    # api_hash → list of (data, msg) in file order
+    assistant_groups: dict[str, list[tuple[dict, dict]]] = {}
+    # For assistant entries without a hash (shouldn't happen, but be safe)
+    assistant_no_hash: list[tuple[dict, dict]] = []
 
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
@@ -185,60 +201,115 @@ def _parse_conversation_file(
                 if role not in ("user", "assistant"):
                     continue
 
-                # Token usage
-                usage_raw = msg.get("usage", {})
-                if not isinstance(usage_raw, dict):
-                    usage_raw = {}
-                usage = TokenUsage(
-                    input_tokens=usage_raw.get("input_tokens", 0),
-                    output_tokens=usage_raw.get("output_tokens", 0),
-                    cache_creation_tokens=usage_raw.get("cache_creation_input_tokens", 0),
-                    cache_read_tokens=usage_raw.get("cache_read_input_tokens", 0),
-                )
-
-                # Top-level metadata
-                cwd = data.get("cwd")
-                git_branch = data.get("gitBranch")
-                claude_version = data.get("version")
-                stop_reason = msg.get("stop_reason")
-
-                # Extract tool names from content blocks
-                tool_names = []
-                content = msg.get("content", [])
-                text_len = 0
-                if isinstance(content, str):
-                    text_len = len(content)
-                elif isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict):
-                            if block.get("type") == "tool_use":
-                                tool_names.append(block.get("name", "unknown"))
-                            elif block.get("type") == "text":
-                                text_len += len(block.get("text", ""))
-
-                base_kwargs = dict(
-                    session_id=session_id,
-                    project=project,
-                    role=role,
-                    timestamp=data.get("timestamp"),
-                    model=msg.get("model"),
-                    usage=usage,
-                    text_length=text_len,
-                    is_subagent=is_subagent,
-                    cwd=cwd,
-                    git_branch=git_branch,
-                    claude_version=claude_version,
-                    stop_reason=stop_reason,
-                )
-
-                if tool_names:
-                    for tool in tool_names:
-                        turns.append(ConversationTurn(**base_kwargs, tool_name=tool))
+                if role == "user":
+                    user_entries.append(data)
                 else:
-                    turns.append(ConversationTurn(**base_kwargs))
+                    msg_id = msg.get("id")
+                    req_id = data.get("requestId")
+                    if msg_id and req_id:
+                        key = f"{msg_id}:{req_id}"
+                        assistant_groups.setdefault(key, []).append((data, msg))
+                    else:
+                        assistant_no_hash.append((data, msg))
 
     except OSError as exc:
         logger.warning("Could not read %s: %s", path, exc)
+        return turns
+
+    zero_usage = TokenUsage(0, 0, 0, 0)
+
+    # Emit user turns (no dedup needed — user messages don't carry token usage)
+    for data in user_entries:
+        msg = data["message"]
+        content = msg.get("content", [])
+        text_len = 0
+        if isinstance(content, str):
+            text_len = len(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text_len += len(block.get("text", ""))
+        turns.append(ConversationTurn(
+            session_id=session_id,
+            project=project,
+            role="user",
+            timestamp=data.get("timestamp"),
+            model=msg.get("model"),
+            usage=zero_usage,
+            text_length=text_len,
+            is_subagent=is_subagent,
+            cwd=data.get("cwd"),
+            git_branch=data.get("gitBranch"),
+            claude_version=data.get("version"),
+            stop_reason=msg.get("stop_reason"),
+        ))
+
+    # Emit one turn per unique API call (deduplicated assistant messages).
+    # We merge all content blocks from the group to capture every tool name,
+    # and take the usage from the last entry (the cumulative total).
+    all_assistant = list(assistant_groups.values()) + [[e] for e in assistant_no_hash]
+    for group in all_assistant:
+        # Last entry has cumulative token usage
+        last_data, last_msg = group[-1]
+
+        # Collect tool names and text across all content blocks in this API call
+        tool_names: list[str] = []
+        text_len = 0
+        for data, msg in group:
+            content = msg.get("content", [])
+            if isinstance(content, str):
+                text_len += len(content)
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "tool_use":
+                            tool_names.append(block.get("name", "unknown"))
+                        elif block.get("type") == "text":
+                            text_len += len(block.get("text", ""))
+
+        usage_raw = last_msg.get("usage", {})
+        if not isinstance(usage_raw, dict):
+            usage_raw = {}
+        usage = TokenUsage(
+            input_tokens=usage_raw.get("input_tokens", 0),
+            output_tokens=usage_raw.get("output_tokens", 0),
+            cache_creation_tokens=usage_raw.get("cache_creation_input_tokens", 0),
+            cache_read_tokens=usage_raw.get("cache_read_input_tokens", 0),
+        )
+
+        # Use metadata from last entry (most complete)
+        stop_reason = last_msg.get("stop_reason")
+        # Fall back through group for stop_reason if last doesn't have it
+        if not stop_reason:
+            for _, m in reversed(group):
+                if m.get("stop_reason"):
+                    stop_reason = m["stop_reason"]
+                    break
+
+        base_kwargs = dict(
+            session_id=session_id,
+            project=project,
+            role="assistant",
+            timestamp=last_data.get("timestamp"),
+            model=last_msg.get("model"),
+            text_length=text_len,
+            is_subagent=is_subagent,
+            cwd=last_data.get("cwd"),
+            git_branch=last_data.get("gitBranch"),
+            claude_version=last_data.get("version"),
+            stop_reason=stop_reason,
+        )
+
+        if tool_names:
+            # Attribute token usage to the first tool turn only
+            for i, tool in enumerate(tool_names):
+                turns.append(ConversationTurn(
+                    **base_kwargs,
+                    usage=usage if i == 0 else zero_usage,
+                    tool_name=tool,
+                ))
+        else:
+            turns.append(ConversationTurn(**base_kwargs, usage=usage))
 
     return turns
 

@@ -265,6 +265,7 @@ def sample_turns():
             role="assistant",
             model="claude-sonnet-4-6",
             tool_name="Read",
+            timestamp="2025-03-21T10:00:00.000Z",
             usage=TokenUsage(
                 input_tokens=500,
                 output_tokens=200,
@@ -278,6 +279,7 @@ def sample_turns():
             role="assistant",
             model="claude-sonnet-4-6",
             tool_name="Edit",
+            timestamp="2025-03-21T10:01:00.000Z",
             usage=TokenUsage(
                 input_tokens=800, output_tokens=150, cache_creation_tokens=0, cache_read_tokens=1200
             ),
@@ -288,6 +290,7 @@ def sample_turns():
             role="assistant",
             model="claude-sonnet-4-6",
             tool_name="Bash",
+            timestamp="2025-03-21T10:02:00.000Z",
             usage=TokenUsage(
                 input_tokens=300, output_tokens=100, cache_creation_tokens=0, cache_read_tokens=800
             ),

@@ -396,16 +396,30 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
             SUM(CASE WHEN tool_name = 'Read' THEN 1 ELSE 0 END) as reads,
             SUM(CASE WHEN tool_name IN ('Edit', 'Write') THEN 1 ELSE 0 END) as edits,
             COUNT(DISTINCT tool_name) as tool_div,
-            SUM(CASE WHEN stop_reason = 'max_tokens' THEN 1 ELSE 0 END) as max_tok,
-            MAX(model) as model,
-            SUM(input_tokens) as inp, SUM(output_tokens) as outp,
-            SUM(cache_creation_tokens) as cc, SUM(cache_read_tokens) as cr
+            SUM(CASE WHEN stop_reason = 'max_tokens' THEN 1 ELSE 0 END) as max_tok
         FROM turns WHERE {clause}
         GROUP BY session_id
     """,
         params,
     )
     session_turn_data = {r[0]: r for r in cur.fetchall()}
+
+    # Per-session per-model token breakdown for accurate cost calculation
+    cur.execute(
+        f"""
+        SELECT session_id, COALESCE(model, '_default'),
+            SUM(input_tokens), SUM(output_tokens),
+            SUM(cache_creation_tokens), SUM(cache_read_tokens)
+        FROM turns WHERE {clause}
+        GROUP BY session_id, COALESCE(model, '_default')
+    """,
+        params,
+    )
+    session_model_tokens: dict[str, list[tuple[str, int, int, int, int]]] = {}
+    for r in cur.fetchall():
+        session_model_tokens.setdefault(r[0], []).append(
+            (r[1], r[2] or 0, r[3] or 0, r[4] or 0, r[5] or 0)
+        )
 
     # Session-level prompt data: texts per session
     clause, params = _where("prompts", project)
@@ -457,16 +471,21 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
             if first_edit_idx is not None and first_edit_idx > 0:
                 has_rbe = any(seq[j] == "Read" for j in range(first_edit_idx))
 
-        # Cost estimate
-        model = turn_row[8] or "_default"
-        pricing = MODEL_PRICING.get(model, MODEL_PRICING["_default"])
-        inp = turn_row[9] or 0
-        outp, cc, cr = turn_row[10] or 0, turn_row[11] or 0, turn_row[12] or 0
-        cost = (
-            (inp / 1_000_000) * pricing["input"]
-            + (outp / 1_000_000) * pricing["output"]
-            + (cc / 1_000_000) * pricing["cache_write"]
-            + (cr / 1_000_000) * pricing["cache_read"]
+        # Cost estimate (per-model to avoid MAX(model) inaccuracy)
+        cost = 0.0
+        model_token_groups = session_model_tokens.get(sid, [])
+        for mdl, inp, outp, cc, cr in model_token_groups:
+            pricing = MODEL_PRICING.get(mdl, MODEL_PRICING["_default"])
+            cost += (
+                (inp / 1_000_000) * pricing["input"]
+                + (outp / 1_000_000) * pricing["output"]
+                + (cc / 1_000_000) * pricing["cache_write"]
+                + (cr / 1_000_000) * pricing["cache_read"]
+            )
+        # Dominant model = highest total tokens in this session
+        dominant_model = (
+            max(model_token_groups, key=lambda g: g[1] + g[2])[0]
+            if model_token_groups else "_default"
         )
 
         session_metrics.append(SessionMetrics(
@@ -483,7 +502,7 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
             avg_prompt_length=sum(lengths) / len(lengths) if lengths else 0,
             file_ref_count=file_refs,
             cost=round(cost, 4),
-            model=model,
+            model=dominant_model,
             max_tokens_hits=turn_row[7],
         ))
 
@@ -572,7 +591,10 @@ def query_project_stats(conn: sqlite3.Connection, project: str) -> tuple[int, in
     )
     token_count = cur.fetchone()[0] or 0
 
-    cur.execute("SELECT COUNT(DISTINCT session_id) FROM prompts WHERE project = ?", (project,))
+    cur.execute(
+        "SELECT COUNT(*) FROM sessions WHERE project = ? AND (prompt_count > 0 OR turn_count > 0)",
+        (project,),
+    )
     session_count = cur.fetchone()[0]
 
     return prompt_count, token_count, session_count

@@ -25,7 +25,7 @@ class TestEstimateCost:
 
     def test_opus_cost(self):
         cost = _estimate_cost("claude-opus-4-6", 1_000_000, 1_000_000, 0, 0)
-        assert cost == 15.0 + 75.0
+        assert cost == 5.0 + 25.0
 
     def test_unknown_model_uses_default(self):
         cost = _estimate_cost("claude-unknown-99", 1_000_000, 0, 0, 0)
@@ -519,6 +519,110 @@ class TestComputeWeeklyDigest:
         assert result["has_data"] is True
         lw = result["last_week"]
         assert lw["prompts"] == 0
+
+
+class TestUsageStreak:
+    """Tests for the usage streak calculation in generate_dashboard_data."""
+
+    def test_streak_consecutive_days_ending_today(self, db_conn):
+        """Streak counts consecutive days ending at today or yesterday."""
+        from datetime import date, timedelta
+
+        today = date.today()
+        prompts = []
+        turns = []
+        sessions = []
+        for i in range(3):
+            d = today - timedelta(days=i)
+            sid = f"streak-session-{i}"
+            ts = datetime(d.year, d.month, d.day, 10, 0, tzinfo=timezone.utc)
+            prompts.append(Prompt(
+                timestamp=ts, project="proj", session_id=sid,
+                text=f"prompt day {i}", char_length=12,
+            ))
+            turns.append(ConversationTurn(
+                session_id=sid, project="proj", role="assistant",
+                model="claude-sonnet-4-6",
+                usage=TokenUsage(input_tokens=100, output_tokens=50),
+                timestamp=ts.isoformat(),
+            ))
+            sessions.append(Session(
+                session_id=sid, project="proj", started_at=ts,
+                prompt_count=1, turn_count=1,
+            ))
+        insert_prompts(db_conn, prompts)
+        insert_turns(db_conn, turns)
+        insert_sessions(db_conn, sessions)
+        data = generate_dashboard_data(db_conn)
+        assert data["usage_streak"] == 3
+
+    def test_streak_gap_resets(self, db_conn):
+        """A gap of >1 day breaks the streak."""
+        from datetime import date, timedelta
+
+        today = date.today()
+        # Active today and 3 days ago (gap of 2 days)
+        prompts = []
+        turns = []
+        sessions = []
+        for offset in [0, 3]:
+            d = today - timedelta(days=offset)
+            sid = f"streak-gap-{offset}"
+            ts = datetime(d.year, d.month, d.day, 10, 0, tzinfo=timezone.utc)
+            prompts.append(Prompt(
+                timestamp=ts, project="proj", session_id=sid,
+                text="prompt", char_length=6,
+            ))
+            turns.append(ConversationTurn(
+                session_id=sid, project="proj", role="assistant",
+                model="claude-sonnet-4-6",
+                usage=TokenUsage(input_tokens=100, output_tokens=50),
+                timestamp=ts.isoformat(),
+            ))
+            sessions.append(Session(
+                session_id=sid, project="proj", started_at=ts,
+                prompt_count=1, turn_count=1,
+            ))
+        insert_prompts(db_conn, prompts)
+        insert_turns(db_conn, turns)
+        insert_sessions(db_conn, sessions)
+        data = generate_dashboard_data(db_conn)
+        assert data["usage_streak"] == 1  # only today counts
+
+    def test_streak_old_data_is_zero(self, db_conn, sample_prompts, sample_turns):
+        """Data from the past (not today/yesterday) produces streak=0."""
+        insert_prompts(db_conn, sample_prompts)
+        insert_turns(db_conn, sample_turns)
+        insert_sessions(db_conn, [Session(
+            session_id="session-001", project="project-alpha",
+            started_at=datetime(2025, 3, 21, 10, 0, tzinfo=timezone.utc),
+            prompt_count=3, turn_count=3,
+        )])
+        data = generate_dashboard_data(db_conn)
+        assert data["usage_streak"] == 0
+
+
+class TestSessionCounts:
+    """Tests for session counting from sessions table."""
+
+    def test_total_sessions_from_sessions_table(self, db_conn, sample_prompts, sample_turns):
+        insert_prompts(db_conn, sample_prompts)
+        insert_turns(db_conn, sample_turns)
+        # Insert 2 sessions — one with prompts, one with turns only
+        insert_sessions(db_conn, [
+            Session(
+                session_id="session-001", project="project-alpha",
+                started_at=datetime(2025, 3, 21, 10, 0, tzinfo=timezone.utc),
+                prompt_count=3, turn_count=3,
+            ),
+            Session(
+                session_id="session-no-prompts", project="project-alpha",
+                started_at=datetime(2025, 3, 21, 11, 0, tzinfo=timezone.utc),
+                prompt_count=0, turn_count=5,
+            ),
+        ])
+        data = generate_dashboard_data(db_conn)
+        assert data["overview"]["total_sessions"] == 2
 
 
 class TestComputePromptLearning:

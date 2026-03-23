@@ -288,27 +288,12 @@ with col_btn:
 
 st.divider()
 
-# ── Period selector ──────────────────────────────────────────────
-range_options = {"7 days": 7, "30 days": 30, "90 days": 90, "All time": None}
-selected_range = st.radio(
-    "Period",
-    options=list(range_options.keys()),
-    index=3,
-    horizontal=True,
-    label_visibility="collapsed",
-)
-DAYS = range_options[selected_range]
+# ── Hero Section (all time) ──────────────────────────────────────
+# Score, cost, and recommendations are always computed from full dataset
+_all_cost_f = DATA.get("daily_cost", [])
+_hero_cost = sum(r.get("c", 0) for r in _all_cost_f)
+_hero_sessions = DATA.get("overview", {}).get("total_sessions", 1)
 
-# Pre-compute period-filtered KPIs (used by hero and KPI row)
-_usage_f = filter_by_range(DATA.get("daily_usage", []), DAYS)
-_cost_f = filter_by_range(DATA.get("daily_cost", []), DAYS)
-_hero_cost = sum(r.get("c", 0) for r in _cost_f)
-_hero_sessions = sum(r["s"] for r in _usage_f)
-
-st.divider()
-
-# ── Cost Hero ────────────────────────────────────────────────────
-# Lead with the numbers that drive behaviour change
 cost_hero_col, score_hero_col, recs_col = st.columns([1.2, 1.3, 1.5])
 
 with cost_hero_col:
@@ -317,31 +302,29 @@ with cost_hero_col:
     waste_pct = corr_cost.get("pct", 0)
     cost_per_session = _hero_cost / max(_hero_sessions, 1)
 
-    period_label = selected_range if selected_range != "All time" else "Total"
     st.markdown(
         f'<div style="text-align:center">'
         f'<div style="font-size:2.2rem;font-weight:800;color:{COLORS["accent"]}">'
         f'${_hero_cost:,.2f}</div>'
         f'<div style="font-size:0.85rem;opacity:0.7">'
-        f'Estimated Cost ({html.escape(period_label)})</div>'
+        f'Estimated Cost (Total)</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
     hero_m1, hero_m2 = st.columns(2)
     with hero_m1:
-        cps_label = f"Cost/Session ({period_label})"
         st.metric(
-            cps_label,
+            "Cost/Session",
             f"${cost_per_session:.2f}",
             help="Average estimated cost per session (one task/feature/bug)",
         )
     with hero_m2:
         st.metric(
-            "Correction Waste (all time)",
+            "Correction Waste",
             f"${wasted:.2f}",
             delta=f"{waste_pct:.1f}% of spend",
             delta_color="inverse",
-            help="All-time estimated cost of replies following correction prompts",
+            help="Estimated cost of replies following correction prompts",
         )
 
 with score_hero_col:
@@ -387,6 +370,19 @@ with recs_col:
         )
 
 st.divider()
+
+# ── Period selector ──────────────────────────────────────────────
+# Affects KPIs, Activity, Projects, Tools, Cost, and some Insights charts.
+# Does NOT affect: hero scores above, Patterns, Journey.
+range_options = {"7 days": 7, "30 days": 30, "90 days": 90, "All time": None}
+selected_range = st.radio(
+    "Period",
+    options=list(range_options.keys()),
+    index=3,
+    horizontal=True,
+    label_visibility="collapsed",
+)
+DAYS = range_options[selected_range]
 
 # ── KPIs ─────────────────────────────────────────────────────────
 # Filter daily data for KPI computation
@@ -590,6 +586,8 @@ with tab_projects:
     pce_data = filter_by_range(DATA.get("project_cost_efficiency", []), DAYS)
     if pce_data:
         st.markdown("**Cost per Session by Project**")
+        # Aggregate cost per project; take max daily session count per day
+        # then sum across days (each day's count is already distinct sessions)
         pce_agg: dict[str, dict] = {}
         for r in pce_data:
             pj = r["pj"]
@@ -597,13 +595,28 @@ with tab_projects:
             pce_agg[pj]["cost"] += r["cost"]
             pce_agg[pj]["sessions"] += r["sessions"]
 
+        # Use all-time unique session counts when showing all-time data;
+        # for filtered periods, the daily sum is the best available approximation
+        if DAYS is None:
+            _proj_sessions = {
+                ps["project"]: ps["sessions"]
+                for ps in DATA.get("project_scores", [])
+            }
+        else:
+            _proj_sessions = None
+
         pce_table = []
         for pj, v in sorted(pce_agg.items(), key=lambda x: x[1]["cost"], reverse=True):
-            cps = v["cost"] / v["sessions"] if v["sessions"] > 0 else 0
+            sessions = (
+                _proj_sessions.get(pj, v["sessions"])
+                if _proj_sessions is not None
+                else v["sessions"]
+            )
+            cps = v["cost"] / max(sessions, 1)
             pce_table.append({
                 "Project": pj,
                 "Total Cost": f'${v["cost"]:.2f}',
-                "Sessions": v["sessions"],
+                "Sessions": sessions,
                 "Cost/Session": f"${cps:.2f}",
             })
         st.dataframe(pce_table, width="stretch", hide_index=True)
@@ -870,6 +883,7 @@ with tab_patterns:
         branch_data = []
         for b in branches:
             branch_data.append({
+                "Project": b.get("project", ""),
                 "Branch": b["branch"],
                 "Replies": b["turns"],
                 "Tokens Received": fmt_tokens(b.get("output_tokens", 0)),

@@ -156,6 +156,155 @@ class TestExtractConversations:
         turns = extract_conversations(mock_claude_dir, changed_files={target})
         assert all(t.project == "alpha" for t in turns)
 
+    def test_streaming_dedup(self, tmp_path):
+        """Streaming chunks sharing the same message.id:requestId are deduplicated.
+
+        Claude Code logs each content block (thinking, text, tool_use) as a
+        separate JSONL entry.  All entries from the same API call share the
+        same message.id and requestId.  Only one turn should be emitted per
+        unique API call, with the cumulative token usage from the last entry.
+        """
+        import json
+
+        claude_dir = tmp_path / ".claude"
+        project_dir = claude_dir / "projects" / "-test-streaming"
+        project_dir.mkdir(parents=True)
+
+        # Simulate streaming: 3 entries from same API call
+        entries = [
+            {
+                "message": {
+                    "role": "assistant",
+                    "id": "msg_abc123",
+                    "model": "claude-sonnet-4-6",
+                    "content": [{"type": "thinking", "thinking": "Let me think..."}],
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 8,
+                        "cache_creation_input_tokens": 500,
+                        "cache_read_input_tokens": 2000,
+                    },
+                },
+                "requestId": "req_xyz789",
+                "timestamp": "2025-03-21T10:00:00.100Z",
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "id": "msg_abc123",
+                    "model": "claude-sonnet-4-6",
+                    "content": [{"type": "text", "text": "I'll fix the bug."}],
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 8,
+                        "cache_creation_input_tokens": 500,
+                        "cache_read_input_tokens": 2000,
+                    },
+                },
+                "requestId": "req_xyz789",
+                "timestamp": "2025-03-21T10:00:00.200Z",
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "id": "msg_abc123",
+                    "model": "claude-sonnet-4-6",
+                    "content": [
+                        {"type": "tool_use", "name": "Read", "id": "tu-1", "input": {}},
+                    ],
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 350,
+                        "cache_creation_input_tokens": 500,
+                        "cache_read_input_tokens": 2000,
+                    },
+                    "stop_reason": "tool_use",
+                },
+                "requestId": "req_xyz789",
+                "timestamp": "2025-03-21T10:00:00.300Z",
+            },
+            # Second API call (different message.id)
+            {
+                "message": {
+                    "role": "assistant",
+                    "id": "msg_def456",
+                    "model": "claude-sonnet-4-6",
+                    "content": [{"type": "text", "text": "Done."}],
+                    "usage": {
+                        "input_tokens": 200,
+                        "output_tokens": 50,
+                        "cache_creation_input_tokens": 0,
+                        "cache_read_input_tokens": 3000,
+                    },
+                    "stop_reason": "end_turn",
+                },
+                "requestId": "req_aaa111",
+                "timestamp": "2025-03-21T10:00:01.000Z",
+            },
+        ]
+        (project_dir / "session-dedup.jsonl").write_text(
+            "\n".join(json.dumps(e) for e in entries) + "\n"
+        )
+
+        turns = extract_conversations(claude_dir)
+        assistant_turns = [t for t in turns if t.role == "assistant"]
+
+        # Should produce 2 turns (one per API call), not 4
+        assert len(assistant_turns) == 2
+
+        # First turn should have cumulative usage from the last streaming entry
+        read_turn = next(t for t in assistant_turns if t.tool_name == "Read")
+        assert read_turn.usage.output_tokens == 350  # cumulative, not 8
+        assert read_turn.usage.input_tokens == 100
+        assert read_turn.usage.cache_read_tokens == 2000
+
+        # Second turn from different API call
+        text_turn = next(t for t in assistant_turns if not t.tool_name)
+        assert text_turn.usage.output_tokens == 50
+
+    def test_multi_tool_single_api_call(self, tmp_path):
+        """Multiple tools in the same API call share token usage — no double-counting."""
+        import json
+
+        claude_dir = tmp_path / ".claude"
+        project_dir = claude_dir / "projects" / "-test-multi-tool"
+        project_dir.mkdir(parents=True)
+
+        entry = {
+            "message": {
+                "role": "assistant",
+                "id": "msg_multi",
+                "model": "claude-sonnet-4-6",
+                "content": [
+                    {"type": "tool_use", "name": "Read", "id": "tu-1", "input": {}},
+                    {"type": "tool_use", "name": "Edit", "id": "tu-2", "input": {}},
+                    {"type": "tool_use", "name": "Bash", "id": "tu-3", "input": {}},
+                ],
+                "usage": {
+                    "input_tokens": 500,
+                    "output_tokens": 300,
+                    "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 4000,
+                },
+                "stop_reason": "tool_use",
+            },
+            "requestId": "req_multi",
+            "timestamp": "2025-03-21T10:00:00.000Z",
+        }
+        (project_dir / "session-multi.jsonl").write_text(json.dumps(entry) + "\n")
+
+        turns = extract_conversations(claude_dir)
+        tool_turns = [t for t in turns if t.tool_name]
+
+        # 3 tool turns, but only the first carries token usage
+        assert len(tool_turns) == 3
+        assert tool_turns[0].usage.output_tokens == 300
+        assert tool_turns[1].usage.output_tokens == 0
+        assert tool_turns[2].usage.output_tokens == 0
+        # Total across all turns = 300, not 900
+        total_out = sum(t.usage.output_tokens for t in tool_turns)
+        assert total_out == 300
+
 
 class TestBuildSessions:
     def test_aggregates_correctly(self, sample_prompts, sample_turns):
