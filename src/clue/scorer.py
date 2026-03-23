@@ -288,7 +288,8 @@ def _score_cost_efficiency(data: ScoringData) -> DimensionScore:
         recs.append(
             f"Session costs range from ${p10:.2f} to ${p90:.2f} "
             f"(typical ${median_cps:.2f}). "
-            "Check what makes your cheapest sessions efficient."
+            "Expensive sessions often mean long conversations — "
+            "start fresh for new tasks instead of continuing."
         )
 
     return DimensionScore(
@@ -532,7 +533,7 @@ def _score_session_discipline(data: ScoringData) -> DimensionScore:
     if shallow_pct > 30:
         recs.append(
             f"{shallow_pct:.0f}% of sessions have <3 prompts. "
-            "Batch related questions into single sessions for better context."
+            "Group related questions into one session so Claude has full context."
         )
     if deep_pct > 10:
         recs.append(
@@ -804,17 +805,21 @@ def _data_driven_recommendations(data: ScoringData) -> list[str]:
         bot_avg_div = sum(m.tool_diversity for m in bottom10) / len(bottom10)
 
         parts = []
+        actions = []
         if top_avg_len > bot_avg_len * 1.3:
             parts.append(f"prompts avg {top_avg_len:.0f} chars (vs {bot_avg_len:.0f})")
+            actions.append("write longer, more specific prompts with context")
         if bot_avg_turns > top_avg_turns * 1.5:
             parts.append(f"stay under {top_avg_turns:.0f} back-and-forths (vs {bot_avg_turns:.0f})")
+            actions.append("break large tasks into separate sessions")
         if top_avg_div > bot_avg_div * 1.2:
             parts.append(f"use {top_avg_div:.0f} tools (vs {bot_avg_div:.0f})")
 
         if parts:
-            recs.append(
-                f"Your most efficient sessions {', '.join(parts)}."
-            )
+            msg = f"Your most efficient sessions {', '.join(parts)}."
+            if actions:
+                msg += f" Try: {actions[0]}."
+            recs.append(msg)
 
     # --- 4. Per-project comparison (cost per session) ---
     projects: dict[str, list] = {}
@@ -837,7 +842,8 @@ def _data_driven_recommendations(data: ScoringData) -> list[str]:
                 recs.append(
                     f"In {best_proj} you spend ${best_cps:.2f}/session. "
                     f"In {worst_proj} it's ${worst_cps:.2f}/session "
-                    f"({ratio:.1f}x more). Check what's different."
+                    f"({ratio:.1f}x more). "
+                    f"Compare prompt style and session length between the two."
                 )
 
     # --- 5. max_tokens hits correlate with session cost ---

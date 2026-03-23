@@ -1384,12 +1384,13 @@ with tab_insights:
         st.markdown("**Branch-Level Efficiency**")
         st.caption(
             "Correction rate and estimated cost per branch. "
-            "Cost is based on output tokens only — actual cost may be higher."
+            "Shows the primary project each branch belongs to."
         )
         br_table = []
         for bc in branch_coaching:
             br_table.append({
                 "Branch": bc["branch"],
+                "Project": bc.get("project", "unknown"),
                 "Sessions": bc["sessions"],
                 "Prompts": bc["prompts"],
                 "Corrections": f'{bc["correction_rate"]:.1f}%',

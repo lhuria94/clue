@@ -891,7 +891,7 @@ def generate_dashboard_data(
         })
 
     # --- Branch coaching (correction rate + cost per branch) ---
-    # Session counts per branch — independent of model splits
+    # Session counts and primary project per branch
     cur.execute("""
         SELECT t.git_branch, COUNT(DISTINCT t.session_id) as sessions
         FROM turns t
@@ -900,6 +900,18 @@ def generate_dashboard_data(
         GROUP BY t.git_branch
     """)
     branch_session_map: dict[str, int] = {r[0]: r[1] for r in cur.fetchall()}
+
+    # Primary project per branch (project with the most turns on that branch)
+    cur.execute("""
+        SELECT git_branch, project, COUNT(*) as cnt
+        FROM turns
+        WHERE git_branch IS NOT NULL AND git_branch != '' AND git_branch != 'HEAD'
+        GROUP BY git_branch, project ORDER BY git_branch, cnt DESC
+    """)
+    branch_project_map: dict[str, str] = {}
+    for br, proj, _cnt in cur.fetchall():
+        if br not in branch_project_map:
+            branch_project_map[br] = proj
 
     # Cost per branch grouped by model for accurate pricing
     cur.execute("""
@@ -941,6 +953,7 @@ def generate_dashboard_data(
         )
         branch_coaching.append({
             "branch": br,
+            "project": branch_project_map.get(br, "unknown"),
             "sessions": br_data["sessions"],
             "prompts": br_total,
             "correction_rate": round(br_corr / max(br_total, 1) * 100, 1),
