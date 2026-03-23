@@ -1172,12 +1172,12 @@ def generate_dashboard_data(
 
         # Strip project names from per-project data (keep aggregated metrics)
         for entry in result.get("daily_project", []):
-            entry["p"] = "project"
+            entry["pj"] = "project"
         for entry in result.get("daily_project_tokens", []):
-            entry["p"] = "project"
+            entry["pj"] = "project"
         for ps in result.get("project_scores", []):
             ps["project"] = "project"
         for pce in result.get("project_cost_efficiency", []):
-            pce["project"] = "project"
+            pce["pj"] = "project"
 
     return result

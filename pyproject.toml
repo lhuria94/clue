@@ -21,6 +21,11 @@ dev = [
     "nox>=2025.2.9",
 ]
 
+[project.urls]
+Homepage = "https://github.com/lhuria94/clue"
+Repository = "https://github.com/lhuria94/clue"
+Issues = "https://github.com/lhuria94/clue/issues"
+
 [project.scripts]
 clue = "clue.cli:main"
 

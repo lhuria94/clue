@@ -191,19 +191,20 @@ from clue.pipeline import run_extract  # noqa: E402
 
 DB_PATH = os.environ.get("CLUE_DB_PATH", str(Path.home() / ".claude" / "usage.db"))
 CLAUDE_DIR = os.environ.get("CLUE_CLAUDE_DIR", str(Path.home() / ".claude"))
+SCRUB_MODE = os.environ.get("CLUE_SCRUB", "").lower() in ("1", "true", "yes")
 
 
 @st.cache_data(ttl=120, show_spinner="Loading data...")
-def load_data(_db_path: str) -> dict:
+def load_data(_db_path: str, scrub: bool = False) -> dict:
     """Query SQLite and return dashboard data dict."""
     conn = init_db(Path(_db_path))
-    data = generate_dashboard_data(conn, git_correlation=True)
+    data = generate_dashboard_data(conn, git_correlation=True, scrub=scrub)
     conn.close()
     return data
 
 
 def get_data() -> dict:
-    return load_data(DB_PATH)
+    return load_data(DB_PATH, scrub=SCRUB_MODE)
 
 
 def filter_by_range(items: list[dict], days: int | None) -> list[dict]:
@@ -275,7 +276,7 @@ with col_meta:
     meta_parts.append("Auto-refreshes every 2 min")
     st.markdown(
         f'<div style="text-align:right;font-size:0.85rem;opacity:0.5">'
-        f'{" · ".join(meta_parts)}</div>',
+        f'{" · ".join(html.escape(p) for p in meta_parts)}</div>',
         unsafe_allow_html=True,
     )
 with col_btn:

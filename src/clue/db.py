@@ -114,7 +114,12 @@ def _get_schema_version(conn: sqlite3.Connection) -> int:
 def init_db(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     """Create or open the database and run pending migrations."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
+    # Set restrictive umask before creating DB to avoid TOCTOU permission window
+    old_umask = os.umask(0o077)
+    try:
+        conn = sqlite3.connect(str(db_path))
+    finally:
+        os.umask(old_umask)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
 

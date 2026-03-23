@@ -148,3 +148,30 @@ class TestSecurityConstraints:
         json_str = json.dumps(data)
         # Absolute paths should not leak into the dashboard JSON
         assert "/home/user/project-alpha" not in json_str
+
+    def test_scrub_mode_no_project_names_in_json(self, mock_claude_dir, tmp_path):
+        """Project names must be stripped from all fields in scrub mode."""
+        db_path = tmp_path / "scrub_proj.db"
+        conn = init_db(db_path)
+        prompts = extract_prompts(mock_claude_dir)
+        turns = extract_conversations(mock_claude_dir)
+        sessions = build_sessions(prompts, turns)
+        insert_prompts(conn, prompts)
+        insert_turns(conn, turns)
+        insert_sessions(conn, sessions)
+        data = generate_dashboard_data(conn, scrub=True)
+        conn.close()
+
+        json_str = json.dumps(data)
+        # Real project names (derived from mock data) must not survive scrub
+        assert "alpha" not in json_str.lower()
+        assert "beta" not in json_str.lower()
+        # Only the placeholder "project" should appear where project names were
+        for entry in data.get("daily_project", []):
+            assert entry["pj"] == "project"
+        for entry in data.get("daily_project_tokens", []):
+            assert entry["pj"] == "project"
+        for ps in data.get("project_scores", []):
+            assert ps["project"] == "project"
+        for pce in data.get("project_cost_efficiency", []):
+            assert pce["pj"] == "project"
