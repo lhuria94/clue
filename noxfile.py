@@ -1,4 +1,4 @@
-"""Nox sessions for Clue — AI efficiency scoring for Claude Code."""
+"""Nox sessions for CLUEI — Code Leverage, Usage & Efficiency Index."""
 
 import nox
 

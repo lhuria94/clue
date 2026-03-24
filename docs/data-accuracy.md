@@ -1,6 +1,6 @@
 # Data Accuracy
 
-How Clue counts tokens, estimates cost, and derives metrics — and the known limitations.
+How CLUEI counts tokens, estimates cost, and derives metrics — and the known limitations.
 
 ## Token Counting
 

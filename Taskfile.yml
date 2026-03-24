@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────
-# Clue Taskfile — AI efficiency scoring for Claude Code
+# CLUEI Taskfile — Code Leverage, Usage & Efficiency Index
 #
 # Prerequisites: mise + uv (see .mise.toml)
 # Quick start:   mise install && uv sync && task check

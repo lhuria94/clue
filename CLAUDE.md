@@ -1,4 +1,4 @@
-# Clue — AI Efficiency Scoring for Claude Code
+# CLUEI — Code Leverage, Usage & Efficiency Index
 
 ## Quick Reference
 
@@ -14,8 +14,8 @@ Without Taskfile: `.venv/bin/pytest tests/ -v`
 
 ## Package
 
-- Name: `clue` (**C**laude **U**sage **E**fficiency)
-- Entry point: `python -m clue` or `clue` CLI
+- Name: `cluei` (**C**ode **L**everage, **U**sage & **E**fficiency **I**ndex)
+- Entry point: `python -m clue` or `cluei` CLI
 - Source: `src/clue/`
 - Tests: `tests/`
 
