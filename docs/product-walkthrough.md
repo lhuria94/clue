@@ -1,4 +1,4 @@
-# Clue Team — Product Walkthrough
+# CLUEI — Product Walkthrough
 
 What every user sees, screen by screen.
 

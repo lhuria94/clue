@@ -1,4 +1,4 @@
-# Clue Team — AI Efficiency Intelligence for Engineering Orgs
+# CLUEI — AI Efficiency Intelligence for Engineering Orgs
 
 ## The Problem
 
@@ -22,15 +22,17 @@ This is tool-agnostic. A developer who writes vague prompts in Cursor is making 
 
 ## What Exists Today
 
-Clue is a local developer tool that:
+CLUEI is a Python CLI tool that:
 - Extracts all Claude Code usage data from `~/.claude/`
 - Scores developers 0-100 across 7 dimensions (prompt quality, cost efficiency, tool mastery, session discipline, etc.)
 - Generates actionable coaching recommendations
-- Provides a personal dashboard with 7 tabs of analytics
+- Provides `cluei score` for terminal-based scoring and recommendations
 - Exports scrubbed (privacy-safe) JSON for sharing
 - Merges multiple exports for basic team comparison
 
 Claude Code is the first provider. The architecture is designed to be provider-agnostic — the scoring engine evaluates behaviours (prompt length, correction rate, tool workflow, session depth), not Claude-specific features.
+
+The CLI and local Streamlit dashboard serve as the prototyping ground. The production dashboard is a single Next.js application with role-based views (see Architecture Decisions below).
 
 ## Vision: The AI Effectiveness Layer
 
@@ -53,7 +55,7 @@ Each provider has a different local data format. Clue normalises them into a com
 
 ## What We're Building
 
-A hosted team dashboard that collects scrubbed metrics from every developer's machine — across all AI coding tools — and presents org-wide AI effectiveness analytics. Each developer keeps their personal Clue dashboard locally. The team service only sees aggregated, scrubbed data — never prompt text, never project names (unless the org opts in), never file paths.
+A self-hosted or managed server (like SonarQube) that collects scrubbed metrics from every developer's machine — across all AI coding tools — and presents AI effectiveness analytics through a single Next.js dashboard. One dashboard serves all roles: developers see their own data, project leads see their project, VPs see the org. The server only receives aggregated, scrubbed data — never prompt text, never project names (unless the org opts in), never file paths.
 
 ## Org Model: Service Company Reality
 
@@ -207,13 +209,12 @@ The scoring engine handles this via **provider profiles** — each provider decl
 ┌─────────────────────────────────────────────────┐
 │  Developer Machine                              │
 │                                                 │
-│  clue extract --provider claude  (PostStop hook)│
-│  clue extract --provider cursor  (on-demand)    │
-│  clue extract --provider copilot (on-demand)    │
-│              ──→ local SQLite (all providers)   │
-│              ──→ local dashboard (unified view)  │
+│  cluei extract --provider claude  (PostStop hook)│
+│  cluei extract --provider cursor  (on-demand)   │
+│  cluei extract --provider copilot (on-demand)   │
+│              ──→ local SQLite (scoring + CLI)    │
 │                                                 │
-│  clue push ──→ scrubs locally ──→ HTTPS POST ──┼──┐
+│  cluei push ──→ scrubs locally ──→ HTTPS POST ─┼──┐
 └─────────────────────────────────────────────────┘  │
                                                      │
 ┌────────────────────────────────────────────────────▼──┐
@@ -287,8 +288,8 @@ The scoring engine handles this via **provider profiles** — each provider decl
 │  │    project_comparison                           │  │
 │  └─────────────────────────────────────────────────┘  │
 │                                                       │
-│  Dashboard: project view, team view, org view          │
-│  (Streamlit initially, SPA later)                     │
+│  Next.js Dashboard: role-based views                   │
+│  (dev self-view, project, team, org)                   │
 └───────────────────────────────────────────────────────┘
 ```
 
@@ -302,7 +303,7 @@ The scoring engine handles this via **provider profiles** — each provider decl
 | `extractor.py` | 100% | Becomes the Claude Code provider extractor. Stays on developer machines unchanged |
 | `export.py` scrub logic | 90% | Scrub runs client-side before push. Provider-agnostic — operates on common schema |
 | `export.py` query patterns | 70% | SQL patterns translate to Postgres with added user_id/team_id/provider filters |
-| Dashboard UI | 60% | Tab structure, chart configs, KPI layouts. Add provider filter dimension alongside team/user/date |
+| Dashboard UX patterns | 40% | Tab structure, KPI layouts, chart types translate to Next.js. Streamlit dashboard served as prototype — production dashboard is Next.js from day one |
 
 ## What's New
 
@@ -316,7 +317,7 @@ The scoring engine handles this via **provider profiles** — each provider decl
 | API service | FastAPI with 3-4 endpoints. Auth middleware. Postgres connection | Medium |
 | Postgres schema | 5-6 tables + materialized views. provider column on all metric tables | Small |
 | Team scoring | Re-score with team-relative percentiles across providers | Small (extends scorer.py) |
-| Team dashboard | Streamlit (then SPA) with team/user/date/provider filters | Medium |
+| Dashboard | Next.js with role-based views, team/user/date/provider filters, SSO | Medium-Large |
 | Provider comparison view | "Claude Code vs Cursor: cost efficiency, session outcomes" per org | Small |
 | Admin panel | Manage teams, API keys, provider opt-in settings | Small |
 
@@ -362,20 +363,19 @@ From **GitHub Copilot Metrics**: Acceptance rate alone is misleading. A develope
 
 **Done when:** 5 developers pushing daily, data visible in Postgres.
 
-### Phase 2 — Team Dashboard (2 weeks)
+### Phase 2 — Dashboard (3 weeks)
 
-**Goal:** Engineering managers can see their team's AI effectiveness.
+**Goal:** One Next.js dashboard that serves all roles — developer self-view through to org overview.
 
+- Next.js app with role-based views:
+  - **Developer**: own scores, trends, per-project breakdown, recommendations
+  - **Project Lead**: all developers on project, project cost, coaching recommendations
+  - **Manager**: reports across all projects, team aggregates
+  - **VP/Org**: all teams, all projects, provider comparison, cost rollup
 - `GET /v1/team?team_id=X&range=90d&provider=all` returns aggregated team data
-- Team dashboard with:
-  - Team efficiency score trend (line chart, filterable by provider)
-  - Per-person score comparison (anonymised by default, names opt-in)
-  - Team cost trend (daily/weekly)
-  - Model mix and tool usage aggregates
-  - Coaching recommendations: "3 team members have prompt quality below 50 — consider a prompt engineering workshop"
-  - Quality gate: alert when team score drops below threshold
-- SSO/OAuth login for dashboard access
-- Role-based visibility: managers see their team, VPs see all teams
+- SSO/OAuth login (NextAuth.js)
+- Quality gate: alert when team score drops below threshold
+- Deployment: same Docker Compose as Phase 1 — adds Next.js container
 
 **Done when:** Engineering managers are checking the dashboard weekly.
 
@@ -401,7 +401,6 @@ From **GitHub Copilot Metrics**: Acceptance rate alone is misleading. A develope
 - Copilot extractor: VS Code extension telemetry → common schema
 - Gemini CLI extractor (when Gemini CLI reaches sufficient adoption)
 - Provider-specific scoring adjustments (Copilot accept/reject/edit vs Claude tool workflow)
-- SPA frontend replacing Streamlit (multi-tenant, embeddable, SSO-native)
 - Self-serve team creation and API key management
 - Historical trend analysis and anomaly detection
 
@@ -415,24 +414,28 @@ From **GitHub Copilot Metrics**: Acceptance rate alone is misleading. A develope
 - Benchmarking across orgs (anonymised, opt-in): "Your org's AI efficiency is in the 75th percentile"
 - AI coaching assistant: personalised improvement plans based on score breakdown
 
-## Deployment Options
+## Deployment Model (SonarQube pattern)
 
-### Option A: Self-hosted (recommended for enterprise)
-- Docker Compose: FastAPI + Postgres + Streamlit
+Same product, two deployment options. Like SonarQube: one codebase, choose where it runs.
+
+### Self-hosted
+- `docker compose up` → FastAPI + Postgres + Next.js
 - Runs on any cloud VM, ECS, or Kubernetes
 - Data never leaves the org's infrastructure
-- Fits security-sensitive orgs
+- Fits security-sensitive orgs and enterprises
+- Org owns upgrades and ops
 
-### Option B: Managed hosted
+### Managed (CLUEI Cloud)
 - We run the service, orgs push to our endpoint
-- Requires strong trust story (scrub mode is the answer)
-- Lower ops burden for customers
+- Scrub mode enforced client-side — trust architecture, not policy
+- Zero ops for customers
 - Revenue model: per-seat SaaS
+- Same Docker images, managed by us
 
-### Option C: Hybrid
-- Self-hosted Postgres (org's data stays on their infra)
-- Managed dashboard service reads from org's DB via secure tunnel
-- Best of both: data sovereignty + zero ops for the dashboard
+### Distribution
+- No PyPI — CLUEI CLI distributed via own installer: `curl -sSL https://cluei.dev/install.sh | bash`
+- Installer detects environment, installs CLI agent, connects to team server
+- Server distributed as Docker images (self-hosted) or hosted by us (managed)
 
 ## Risks
 
@@ -472,19 +475,15 @@ From **GitHub Copilot Metrics**: Acceptance rate alone is misleading. A develope
 7. **Integration with existing tools?** Jira/Linear for delivery correlation, Slack for digests, SSO provider for auth. Which are Phase 2 vs Phase 4?
 8. **Pricing model?** Free for self-hosted, per-seat for managed? Free tier up to N developers?
 
-## Naming
+## Naming — Resolved
 
-"Clue" works for the local tool. The team/org product needs a name that signals:
-- Multi-provider (not Claude-specific)
-- Team/org-level (not personal)
-- Effectiveness (not just usage tracking)
+**CLUEI** — **C**ode **L**everage, **U**tilization & **E**fficiency **I**ndex
 
-Options to consider:
-- **Clue Team** — simple extension, keeps brand continuity
-- **Clue for Teams** — SaaS positioning
-- Rename entirely if the team product becomes the primary product
-
-The CLI stays `clue`. The team service is `clue-server` or similar. The extractors are `clue-extract-claude`, `clue-extract-cursor`, etc.
+One name for everything:
+- CLI: `cluei` (extract, score, push)
+- Server: `cluei-server` (Docker image)
+- Dashboard: part of the server, accessed via browser
+- Provider-neutral: no AI tool name in the brand
 
 ## Decision: Build or Wait?
 
@@ -500,18 +499,51 @@ The CLI stays `clue`. The team service is `clue-server` or similar. The extracto
 - Single tool, single team (personal Clue dashboard is sufficient)
 - No org interest in AI metrics yet
 
+## Architecture Decisions
+
+### One dashboard, not two
+
+The personal Streamlit dashboard and team dashboard are not separate products. One Next.js dashboard serves all roles via role-based views:
+- Developer opens it → sees only their own data (same information as `cluei score`, but visual)
+- Project lead → sees their project's developers
+- VP → sees org rollup
+
+**Why:** Maintaining two dashboard stacks (Streamlit + Next.js) is a long-term cost with no benefit. The "personal" view is just the team dashboard filtered to `user_id = me`. SonarQube doesn't have a "personal SonarQube" and a "team SonarQube" — it's one product with scoped views.
+
+The existing Streamlit dashboard served its purpose: prototyping, screenshots, validating the UX. It stays in the CLI for local/offline use but is not the production dashboard.
+
+### CLI stays Python, dashboard is Next.js
+
+The CLI (extract, score, push) stays Python because the extraction logic, scoring engine, and 187 tests already exist. Rewriting in Go for single-binary distribution is a future optimisation, not a current need.
+
+The dashboard is Next.js because it needs auth (NextAuth.js), role-based views, SSO, multi-tenancy, and embedding — none of which Streamlit handles well.
+
+### No PyPI
+
+The product is a self-hosted/managed server, not a Python library. Distribution is via:
+- Own installer (`curl -sSL https://cluei.dev/install.sh | bash`) for the CLI agent
+- Docker images for the server
+- PyPI doesn't serve the product vision — it's a distribution channel for individual Python packages, not team products
+
+### SonarQube deployment model
+
+Same codebase, two deployment options. Self-hosted (`docker compose up`) or managed (we host it). The CLI agent doesn't care which — it pushes to an endpoint URL.
+
 ## Bottom Line
 
 Every engineering org is spending on AI coding tools. None of them can answer whether it's working — and in a service company, they can't even attribute the cost to the right project.
 
-Clue already solves the hard problem: defining and measuring what "good AI-assisted development" looks like, across 7 dimensions, with actionable coaching. This works today for individual developers with Claude Code.
+CLUEI already solves the hard problem: defining and measuring what "good AI-assisted development" looks like, across 7 dimensions, with actionable coaching. This works today for individual developers with Claude Code.
+
+The stack:
+- **`cluei` CLI** — Python (extract, score, push)
+- **CLUEI Server** — FastAPI + Postgres + Next.js dashboard
 
 The path to a multi-provider, multi-project team product:
 
-1. **Data model: developer × project × day × provider** — this is the atomic grain that supports every slice leadership will ask for
-2. **Common metrics schema** — all provider extractors normalise to the same contract
-3. **Push + collect pipeline** — scrubbed data flows from developer machines to central Postgres (Phase 1, 2 weeks)
-4. **Project and team views** — slice the same data by project (for delivery managers) or by person (for people managers)
-5. **Provider extractors** — Claude Code first, Cursor next, Copilot and Gemini to follow
+1. **`cluei push`** — scrubbed data flows from developer machines to central Postgres
+2. **Next.js dashboard** — one dashboard, role-based views, developer through to VP
+3. **Provider extractors** — Claude Code first, Cursor next, Copilot and Gemini to follow
+4. **Data model: developer × project × day × provider** — the atomic grain that supports every slice
 
-The scoring engine is the IP. The extractors are plumbing. The team service is a standard API + Postgres. The real moat is being first to define AI effectiveness measurement that works across every tool, every project, and every team — and coaching orgs to get better at it.
+The scoring engine is the IP. The extractors are plumbing. The server is a standard API + Postgres. The real moat is being first to define AI effectiveness measurement that works across every tool, every project, and every team — and coaching orgs to get better at it.

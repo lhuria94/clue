@@ -1,4 +1,4 @@
-# Clue Team — How It Works
+# CLUEI — How It Works
 
 End-to-end flow from developer setup to leadership dashboard.
 
@@ -8,16 +8,16 @@ End-to-end flow from developer setup to leadership dashboard.
 
 | Layer | Technology | Why |
 |---|---|---|
-| **Developer CLI** | Python 3.10+ (existing Clue) | Already works. Zero new dependencies. Runs everywhere |
+| **Developer CLI** | Python 3.10+ (existing CLUEI) | Already works. Zero new dependencies. Runs everywhere. Future: Go binary for single-binary distribution |
 | **Provider extractors** | Python, one module per provider | Shares models/patterns with CLI. Easy to add new providers |
-| **Local storage** | SQLite (existing) | Developer's personal dashboard. Never leaves their machine |
+| **Local storage** | SQLite (existing) | Extraction and scoring happen locally. Raw data never leaves the developer's machine |
 | **Push transport** | HTTPS POST with API key header | Simple, stateless, works through corporate proxies |
-| **Team API** | FastAPI (Python) | Same language as CLI — shared scorer/models. Async, fast, OpenAPI docs for free |
-| **Team database** | PostgreSQL 16 | The only state. Handles concurrent writes from 500 developers without breaking a sweat |
-| **Team dashboard** | Streamlit initially → Next.js SPA later | Streamlit gets us to market fast. SPA when we need embedding, SSO, and polish |
+| **Server API** | FastAPI (Python) | Same language as CLI — shared scorer/models. Async, fast, OpenAPI docs for free |
+| **Server database** | PostgreSQL 16 | The only state. Handles concurrent writes from 500 developers without breaking a sweat |
+| **Dashboard** | Next.js | One dashboard for all users — developer self-view, project lead view, org view. Role-based access. SSO-native, embeddable, multi-tenant |
 | **Auth** | API keys (push), OAuth2/SSO (dashboard) | API keys are zero-friction for developers. SSO is table stakes for enterprise dashboard access |
-| **Hosting** | Docker Compose (self-hosted) or Cloud Run (managed) | Self-hosted for enterprises who won't let data leave. Managed for everyone else |
-| **Migrations** | Alembic (Postgres schema versioning) | Industry standard for Python + Postgres. Follows the pattern Clue already uses for SQLite migrations |
+| **Deployment** | Docker Compose (self-hosted) or Cloud Run (managed) | SonarQube model: same product, your infra or ours. Self-hosted for data sovereignty, managed for zero ops |
+| **Migrations** | Alembic (Postgres schema versioning) | Industry standard for Python + Postgres. Follows the pattern CLUEI already uses for SQLite migrations |
 
 ---
 
@@ -87,21 +87,21 @@ Setup does:
 4. Prints the developer's AI efficiency score with recommendations
 5. Runs `clue doctor` to validate everything works
 
-**At this point the developer has a fully working personal dashboard.** No server needed. No account needed. They can stop here if they want.
+**At this point the developer has a working CLI with local scoring.** `cluei score` shows their efficiency score and recommendations. The full dashboard experience comes from the server (self-hosted or managed).
 
 ### Step 2 — Connect to team (1 minute)
 
 The team admin gives the developer an API key and endpoint URL. The developer runs:
 
 ```bash
-clue config --team-endpoint https://clue.yourcompany.com --api-key clue_sk_...
+cluei push --endpoint https://cluei.yourcompany.com --api-key cluei_sk_...
 ```
 
-This writes to `~/.claude/clue-team.json`:
+First run saves config to `~/.claude/cluei-team.json` for subsequent pushes:
 ```json
 {
-  "endpoint": "https://clue.yourcompany.com",
-  "api_key": "clue_sk_...",
+  "endpoint": "https://cluei.yourcompany.com",
+  "api_key": "cluei_sk_...",
   "auto_push": true,
   "scrub": true
 }
@@ -534,27 +534,27 @@ Roles derived from SSO groups or manually assigned.
 ## Summary: What Moves Where
 
 ```
-Developer Machine                          Team Server
-─────────────────                          ───────────
+Developer Machine                          CLUEI Server
+─────────────────                          ────────────
 
 ~/.claude/*.jsonl
      │
      ▼
-clue extract
+cluei extract
  (dedup, parse, attribute)
      │
      ▼
 Local SQLite
- (full data, personal use)
+ (scoring + CLI use only)
      │
      ▼
-clue export --scrub
+cluei push (includes scrub)
  (strip prompt text, paths,
   project names → git remotes,
   compute scores locally)
      │
      ▼
-clue push ─── HTTPS POST ──────────────▶  POST /v1/push
+HTTPS POST ────────────────────────────▶  POST /v1/push
                                             │
   Payload:                                  ▼
   - daily metrics (counts, not content)   Validate + upsert
@@ -568,9 +568,10 @@ clue push ─── HTTPS POST ──────────────▶  PO
   - conversation content                   (project, team, org rollups)
   - file paths                              │
   - code                                    ▼
-  - branch names                          Dashboard
-                                           (project view, team view,
-                                            org view, dev self-view)
+  - branch names                          Next.js Dashboard
+                                           (role-based views:
+                                            dev self-view, project,
+                                            team, org)
 ```
 
 The boundary is clear: **raw data stays on the developer's machine. Only scrubbed, pre-scored, pre-costed metrics cross the wire.** The server is a dumb aggregation layer — all intelligence (extraction, dedup, scoring, cost calculation) happens at the edge where the data lives.
