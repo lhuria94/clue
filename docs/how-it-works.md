@@ -1,4 +1,4 @@
-# CLUEI — How It Works
+# Clue — How It Works
 
 End-to-end flow from developer setup to leadership dashboard.
 
@@ -8,7 +8,7 @@ End-to-end flow from developer setup to leadership dashboard.
 
 | Layer | Technology | Why |
 |---|---|---|
-| **Developer CLI** | Python 3.10+ (existing CLUEI) | Already works. Zero new dependencies. Runs everywhere. Future: Go binary for single-binary distribution |
+| **Developer CLI** | Python 3.10+ (existing Clue) | Already works. Zero new dependencies. Runs everywhere. Future: Go binary for single-binary distribution |
 | **Provider extractors** | Python, one module per provider | Shares models/patterns with CLI. Easy to add new providers |
 | **Local storage** | SQLite (existing) | Extraction and scoring happen locally. Raw data never leaves the developer's machine |
 | **Push transport** | HTTPS POST with API key header | Simple, stateless, works through corporate proxies |
@@ -17,7 +17,7 @@ End-to-end flow from developer setup to leadership dashboard.
 | **Dashboard** | Next.js | One dashboard for all users — developer self-view, project lead view, org view. Role-based access. SSO-native, embeddable, multi-tenant |
 | **Auth** | API keys (push), OAuth2/SSO (dashboard) | API keys are zero-friction for developers. SSO is table stakes for enterprise dashboard access |
 | **Deployment** | Docker Compose (self-hosted) or Cloud Run (managed) | SonarQube model: same product, your infra or ours. Self-hosted for data sovereignty, managed for zero ops |
-| **Migrations** | Alembic (Postgres schema versioning) | Industry standard for Python + Postgres. Follows the pattern CLUEI already uses for SQLite migrations |
+| **Migrations** | Alembic (Postgres schema versioning) | Industry standard for Python + Postgres. Follows the pattern Clue already uses for SQLite migrations |
 
 ---
 
@@ -77,7 +77,7 @@ The scorer is stateless — give it numbers, get back a score. It doesn't know w
 ### Step 1 — Install Clue locally (2 minutes)
 
 ```bash
-git clone https://github.com/lhuria94/cluei.git && cd clue && ./setup.sh
+git clone https://github.com/lhuria94/clue.git && cd clue && ./setup.sh
 ```
 
 Setup does:
@@ -87,21 +87,21 @@ Setup does:
 4. Prints the developer's AI efficiency score with recommendations
 5. Runs `clue doctor` to validate everything works
 
-**At this point the developer has a working CLI with local scoring.** `cluei score` shows their efficiency score and recommendations. The full dashboard experience comes from the server (self-hosted or managed).
+**At this point the developer has a working CLI with local scoring.** `clue score` shows their efficiency score and recommendations. The full dashboard experience comes from the server (self-hosted or managed).
 
 ### Step 2 — Connect to team (1 minute)
 
 The team admin gives the developer an API key and endpoint URL. The developer runs:
 
 ```bash
-cluei push --endpoint https://cluei.yourcompany.com --api-key cluei_sk_...
+clue push --endpoint https://clue.yourcompany.com --api-key clue_sk_...
 ```
 
-First run saves config to `~/.claude/cluei-team.json` for subsequent pushes:
+First run saves config to `~/.claude/clue-team.json` for subsequent pushes:
 ```json
 {
-  "endpoint": "https://cluei.yourcompany.com",
-  "api_key": "cluei_sk_...",
+  "endpoint": "https://clue.yourcompany.com",
+  "api_key": "clue_sk_...",
   "auto_push": true,
   "scrub": true
 }
@@ -534,13 +534,13 @@ Roles derived from SSO groups or manually assigned.
 ## Summary: What Moves Where
 
 ```
-Developer Machine                          CLUEI Server
+Developer Machine                          Clue Server
 ─────────────────                          ────────────
 
 ~/.claude/*.jsonl
      │
      ▼
-cluei extract
+clue extract
  (dedup, parse, attribute)
      │
      ▼
@@ -548,7 +548,7 @@ Local SQLite
  (scoring + CLI use only)
      │
      ▼
-cluei push (includes scrub)
+clue push (includes scrub)
  (strip prompt text, paths,
   project names → git remotes,
   compute scores locally)

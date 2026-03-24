@@ -1,4 +1,4 @@
-# CLUEI — Code Leverage, Utilization & Efficiency Index
+# Clue — AI Efficiency Index for Engineering Teams
 
 ## Quick Reference
 
@@ -14,8 +14,8 @@ Without Taskfile: `.venv/bin/pytest tests/ -v`
 
 ## Package
 
-- Name: `cluei` (**C**ode **L**everage, **U**sage & **E**fficiency **I**ndex)
-- Entry point: `python -m clue` or `cluei` CLI
+- Name: `clue` — AI Efficiency Index for Engineering Teams
+- Entry point: `python -m clue` or `clue` CLI
 - Source: `src/clue/`
 - Tests: `tests/`
 

@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────
-# CLUEI Taskfile — Code Leverage, Utilization & Efficiency Index
+# Clue Taskfile — AI Efficiency Index for Engineering Teams
 #
 # Prerequisites: mise + uv (see .mise.toml)
 # Quick start:   mise install && uv sync && task check

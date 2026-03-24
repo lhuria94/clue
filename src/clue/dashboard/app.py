@@ -1,4 +1,4 @@
-"""CLUEI Dashboard — Streamlit-powered AI efficiency dashboard."""
+"""Clue Dashboard — Streamlit-powered AI efficiency dashboard."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ if _src not in sys.path:
 
 # ── Page config ──────────────────────────────────────────────────
 st.set_page_config(
-    page_title="CLUEI — AI Efficiency Dashboard",
+    page_title="Clue — AI Efficiency Dashboard",
     page_icon="🔍",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -265,7 +265,7 @@ col_hdr, _, col_meta, col_btn = st.columns([3, 3, 2, 0.7], vertical_alignment="c
 with col_hdr:
     st.markdown(
         '<span style="font-size:1.35rem;font-weight:700;letter-spacing:-0.02em">'
-        '<span style="color:#6366f1">CLUEI</span>'
+        '<span style="color:#6366f1">Clue</span>'
         '<span style="color:#fb923c">.</span> AI Efficiency Dashboard</span>',
         unsafe_allow_html=True,
     )
@@ -1506,4 +1506,4 @@ with tab_insights:
 
 # ── Footer ───────────────────────────────────────────────────────
 st.divider()
-st.caption("CLUEI — Code Leverage, Utilization & Efficiency Index")
+st.caption("Clue — AI Efficiency Index for Engineering Teams")

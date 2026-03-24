@@ -1,7 +1,7 @@
 [project]
-name = "cluei"
+name = "clue"
 version = "0.2.0"
-description = "CLUEI — Code Leverage, Utilization & Efficiency Index for AI coding tools"
+description = "Clue — AI Efficiency Index for Engineering Teams"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -22,12 +22,12 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/lhuria94/cluei"
-Repository = "https://github.com/lhuria94/cluei"
-Issues = "https://github.com/lhuria94/cluei/issues"
+Homepage = "https://github.com/lhuria94/clue"
+Repository = "https://github.com/lhuria94/clue"
+Issues = "https://github.com/lhuria94/clue/issues"
 
 [project.scripts]
-cluei = "clue.cli:main"
+clue = "clue.cli:main"
 
 [build-system]
 requires = ["hatchling"]

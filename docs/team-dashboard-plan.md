@@ -1,4 +1,4 @@
-# CLUEI — AI Efficiency Intelligence for Engineering Orgs
+# Clue — AI Efficiency Intelligence for Engineering Orgs
 
 ## The Problem
 
@@ -22,11 +22,11 @@ This is tool-agnostic. A developer who writes vague prompts in Cursor is making 
 
 ## What Exists Today
 
-CLUEI is a Python CLI tool that:
+Clue is a Python CLI tool that:
 - Extracts all Claude Code usage data from `~/.claude/`
 - Scores developers 0-100 across 7 dimensions (prompt quality, cost efficiency, tool mastery, session discipline, etc.)
 - Generates actionable coaching recommendations
-- Provides `cluei score` for terminal-based scoring and recommendations
+- Provides `clue score` for terminal-based scoring and recommendations
 - Exports scrubbed (privacy-safe) JSON for sharing
 - Merges multiple exports for basic team comparison
 
@@ -209,12 +209,12 @@ The scoring engine handles this via **provider profiles** — each provider decl
 ┌─────────────────────────────────────────────────┐
 │  Developer Machine                              │
 │                                                 │
-│  cluei extract --provider claude  (PostStop hook)│
-│  cluei extract --provider cursor  (on-demand)   │
-│  cluei extract --provider copilot (on-demand)   │
+│  clue extract --provider claude  (PostStop hook)│
+│  clue extract --provider cursor  (on-demand)   │
+│  clue extract --provider copilot (on-demand)   │
 │              ──→ local SQLite (scoring + CLI)    │
 │                                                 │
-│  cluei push ──→ scrubs locally ──→ HTTPS POST ─┼──┐
+│  clue push ──→ scrubs locally ──→ HTTPS POST ─┼──┐
 └─────────────────────────────────────────────────┘  │
                                                      │
 ┌────────────────────────────────────────────────────▼──┐
@@ -425,7 +425,7 @@ Same product, two deployment options. Like SonarQube: one codebase, choose where
 - Fits security-sensitive orgs and enterprises
 - Org owns upgrades and ops
 
-### Managed (CLUEI Cloud)
+### Managed (Clue Cloud)
 - We run the service, orgs push to our endpoint
 - Scrub mode enforced client-side — trust architecture, not policy
 - Zero ops for customers
@@ -433,7 +433,7 @@ Same product, two deployment options. Like SonarQube: one codebase, choose where
 - Same Docker images, managed by us
 
 ### Distribution
-- No PyPI — CLUEI CLI distributed via own installer: `curl -sSL https://cluei.dev/install.sh | bash`
+- No PyPI — Clue CLI distributed via own installer: `curl -sSL https://clueai.dev/install.sh | bash`
 - Installer detects environment, installs CLI agent, connects to team server
 - Server distributed as Docker images (self-hosted) or hosted by us (managed)
 
@@ -477,12 +477,13 @@ Same product, two deployment options. Like SonarQube: one codebase, choose where
 
 ## Naming — Resolved
 
-**CLUEI** — **C**ode **L**everage, **U**tilization & **E**fficiency **I**ndex
+**Clue** — AI Efficiency Index for Engineering Teams
 
 One name for everything:
-- CLI: `cluei` (extract, score, push)
-- Server: `cluei-server` (Docker image)
+- CLI: `clue` (extract, score, push)
+- Server: `clue-server` (Docker image)
 - Dashboard: part of the server, accessed via browser
+- Domain: `clueai.dev`
 - Provider-neutral: no AI tool name in the brand
 
 ## Decision: Build or Wait?
@@ -504,7 +505,7 @@ One name for everything:
 ### One dashboard, not two
 
 The personal Streamlit dashboard and team dashboard are not separate products. One Next.js dashboard serves all roles via role-based views:
-- Developer opens it → sees only their own data (same information as `cluei score`, but visual)
+- Developer opens it → sees only their own data (same information as `clue score`, but visual)
 - Project lead → sees their project's developers
 - VP → sees org rollup
 
@@ -521,7 +522,7 @@ The dashboard is Next.js because it needs auth (NextAuth.js), role-based views, 
 ### No PyPI
 
 The product is a self-hosted/managed server, not a Python library. Distribution is via:
-- Own installer (`curl -sSL https://cluei.dev/install.sh | bash`) for the CLI agent
+- Own installer (`curl -sSL https://clueai.dev/install.sh | bash`) for the CLI agent
 - Docker images for the server
 - PyPI doesn't serve the product vision — it's a distribution channel for individual Python packages, not team products
 
@@ -533,15 +534,15 @@ Same codebase, two deployment options. Self-hosted (`docker compose up`) or mana
 
 Every engineering org is spending on AI coding tools. None of them can answer whether it's working — and in a service company, they can't even attribute the cost to the right project.
 
-CLUEI already solves the hard problem: defining and measuring what "good AI-assisted development" looks like, across 7 dimensions, with actionable coaching. This works today for individual developers with Claude Code.
+Clue already solves the hard problem: defining and measuring what "good AI-assisted development" looks like, across 7 dimensions, with actionable coaching. This works today for individual developers with Claude Code.
 
 The stack:
-- **`cluei` CLI** — Python (extract, score, push)
-- **CLUEI Server** — FastAPI + Postgres + Next.js dashboard
+- **`clue` CLI** — Python (extract, score, push)
+- **Clue Server** — FastAPI + Postgres + Next.js dashboard
 
 The path to a multi-provider, multi-project team product:
 
-1. **`cluei push`** — scrubbed data flows from developer machines to central Postgres
+1. **`clue push`** — scrubbed data flows from developer machines to central Postgres
 2. **Next.js dashboard** — one dashboard, role-based views, developer through to VP
 3. **Provider extractors** — Claude Code first, Cursor next, Copilot and Gemini to follow
 4. **Data model: developer × project × day × provider** — the atomic grain that supports every slice

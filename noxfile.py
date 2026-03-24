@@ -1,4 +1,4 @@
-"""Nox sessions for CLUEI — Code Leverage, Utilization & Efficiency Index."""
+"""Nox sessions for Clue — AI Efficiency Index for Engineering Teams."""
 
 import nox
 

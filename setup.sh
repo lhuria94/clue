@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────
-# CLUEI bootstrap for macOS / Linux
+# Clue bootstrap for macOS / Linux
 #
 # What this does:
 #   1. Finds Python 3.10+ (or tells you how to install it)
 #   2. Creates a virtual environment
-#   3. Installs CLUEI + test deps (zero external deps)
+#   3. Installs Clue + test deps (zero external deps)
 #   4. Optionally installs Taskfile (go-task)
 #   5. Runs full test suite
 #   6. Runs doctor (validates all prerequisites)
 #   7. Runs setup (extract data + install hook + print score)
 #
 # Usage:
-#   git clone <repo-url> && cd cluei && ./setup.sh
+#   git clone <repo-url> && cd clue && ./setup.sh
 # ─────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -30,7 +30,7 @@ fail() { printf "  ${RED}[FAIL]${RESET} %s\n" "$*"; }
 info() { printf "  ${CYAN}[..]${RESET}   %s\n" "$*"; }
 step() { printf "\n${BOLD}── %s${RESET}\n" "$*"; }
 
-printf "\n${BOLD}CLUEI${RESET} — Code Leverage, Utilization & Efficiency Index\n"
+printf "\n${BOLD}Clue${RESET} — AI Efficiency Index for Engineering Teams\n"
 echo "═══════════════════════════════════════════════════════"
 
 # ── Locate project root ───────────────────────────────────────
@@ -38,7 +38,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 if [ ! -f "src/clue/__main__.py" ]; then
-    fail "Cannot find CLUEI source. Run from the project root."
+    fail "Cannot find Clue source. Run from the project root."
     exit 1
 fi
 
@@ -107,9 +107,9 @@ VENV_PIP="${VENV}/bin/pip"
 # ── Step 3: Install package ───────────────────────────────────
 step "Install"
 
-info "Installing CLUEI + dev tools..."
+info "Installing Clue + dev tools..."
 if "$VENV_PIP" install --quiet -e ".[test,dev]" 2>&1; then
-    ok "Installed CLUEI $(${VENV_PYTHON} -c 'from clue import __version__; print(__version__)')"
+    ok "Installed Clue $(${VENV_PYTHON} -c 'from clue import __version__; print(__version__)')"
 else
     fail "pip install failed — check your network connection and try again"
     exit 1

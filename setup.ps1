@@ -1,8 +1,8 @@
 # ─────────────────────────────────────────────────────────────
-# CLUEI bootstrap for Windows (PowerShell)
+# Clue bootstrap for Windows (PowerShell)
 #
 # Usage:
-#   git clone <repo-url>; cd cluei; .\setup.ps1
+#   git clone <repo-url>; cd clue; .\setup.ps1
 #
 # If you get a "running scripts is disabled" error, run:
 #   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
@@ -14,7 +14,7 @@ function Write-Warn($msg) { Write-Host "  [WARN] $msg" -ForegroundColor Yellow }
 function Write-Fail($msg) { Write-Host "  [FAIL] $msg" -ForegroundColor Red }
 function Write-Step($msg) { Write-Host "`n-- $msg" -ForegroundColor White }
 
-Write-Host "`nCLUEI — Code Leverage, Utilization & Efficiency Index" -ForegroundColor White
+Write-Host "`nClue — AI Efficiency Index for Engineering Teams" -ForegroundColor White
 Write-Host ("=" * 55)
 
 # ── Step 1: Find Python 3.10+ ─────────────────────────────────
@@ -71,7 +71,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Fail "pip install failed — check your network connection and try again"
     exit 1
 }
-Write-Ok "Installed CLUEI"
+Write-Ok "Installed Clue"
 
 # ── Step 4: Claude Code data ──────────────────────────────────
 Write-Step "Claude Code Data"

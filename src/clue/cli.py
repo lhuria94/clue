@@ -1,4 +1,4 @@
-"""CLI entry point for CLUEI — Code Leverage, Utilization & Efficiency Index.
+"""CLI entry point for Clue — AI Efficiency Index for Engineering Teams.
 
 Commands:
     python -m clue setup     # Install hook + first extract + open dashboard
@@ -221,7 +221,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
                 print(f"         Fix: {fix}")
         return passed
 
-    print("\nCLUEI doctor")
+    print("\nClue doctor")
     print("=" * 50)
 
     # 1. Python version
@@ -373,7 +373,7 @@ def cmd_setup(args: argparse.Namespace) -> None:
     claude_dir = Path(args.claude_dir)
     db_path = Path(args.db)
 
-    print("CLUEI — Setup")
+    print("Clue — Setup")
     print("=" * 40)
 
     # 1. Verify .claude directory exists
@@ -570,7 +570,7 @@ def cmd_dashboard(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="clue",
-        description="CLUEI — Code Leverage, Utilization & Efficiency Index",
+        description="Clue — AI Efficiency Index for Engineering Teams",
     )
     parser.add_argument(
         "--claude-dir",

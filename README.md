@@ -1,8 +1,8 @@
-# CLUEI
+# Clue
 
-**C**ode **L**everage, **U**sage & **E**fficiency **I**ndex — AI efficiency scoring and telemetry dashboard for AI coding tools.
+AI Efficiency Index for Engineering Teams.
 
-Get scored 0-100 on how efficiently you use AI. Track tokens, costs, tool usage across every project. Receive actionable recommendations. Share anonymised metrics with your team. Currently supports [Claude Code](https://claude.com/claude-code), with more providers planned.
+Get scored 0-100 on how efficiently you use AI coding tools. Track tokens, costs, tool usage across every project. Receive actionable recommendations. Share anonymised metrics with your team. Currently supports [Claude Code](https://claude.com/claude-code), with more providers planned.
 
 Python 3.10+. SQLite for storage. Streamlit + Plotly dashboard.
 
@@ -13,7 +13,7 @@ Python 3.10+. SQLite for storage. Streamlit + Plotly dashboard.
 ### Option A: mise + uv (recommended for developers)
 
 ```bash
-git clone https://github.com/lhuria94/cluei.git && cd clue
+git clone https://github.com/lhuria94/clue.git && cd clue
 mise install          # installs Python 3.14 + uv
 uv sync --group dev   # reproducible install from lockfile
 task setup            # test + extract + hook + doctor
@@ -24,14 +24,14 @@ Requires [mise](https://mise.jdx.dev) (`curl https://mise.jdx.dev/install.sh | s
 ### Option B: macOS / Linux (no prerequisites beyond Python)
 
 ```bash
-git clone https://github.com/lhuria94/cluei.git && cd clue && ./setup.sh
+git clone https://github.com/lhuria94/clue.git && cd clue && ./setup.sh
 ```
 
 ### Option C: Windows (PowerShell)
 
 ```powershell
 # If needed first: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-git clone https://github.com/lhuria94/cluei.git; cd clue; .\setup.ps1
+git clone https://github.com/lhuria94/clue.git; cd clue; .\setup.ps1
 ```
 
 ### What setup does
@@ -40,7 +40,7 @@ git clone https://github.com/lhuria94/cluei.git; cd clue; .\setup.ps1
 |------|-------------|------------|
 | 1 | Detects Python 3.10+ (or tells you exactly how to install it) | Yes |
 | 2 | Creates `.venv/` virtual environment | Yes |
-| 3 | Installs `cluei` + dev tools into venv | Yes |
+| 3 | Installs `clue` + dev tools into venv | Yes |
 | 4 | Offers to install [Taskfile](https://taskfile.dev) for shortcuts (optional) | Prompted |
 | 5 | Runs 180-test suite to verify everything works | Yes |
 | 6 | Extracts all your Claude Code data from `~/.claude/` | Yes |
