@@ -1,4 +1,4 @@
-"""CLI entry point for CLUEI — Code Leverage, Usage & Efficiency Index.
+"""CLI entry point for CLUEI — Code Leverage, Utilization & Efficiency Index.
 
 Commands:
     python -m clue setup     # Install hook + first extract + open dashboard
@@ -570,7 +570,7 @@ def cmd_dashboard(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="clue",
-        description="CLUEI — Code Leverage, Usage & Efficiency Index",
+        description="CLUEI — Code Leverage, Utilization & Efficiency Index",
     )
     parser.add_argument(
         "--claude-dir",

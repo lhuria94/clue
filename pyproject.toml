@@ -1,7 +1,7 @@
 [project]
 name = "cluei"
 version = "0.2.0"
-description = "CLUEI — Code Leverage, Usage & Efficiency Index for AI coding tools"
+description = "CLUEI — Code Leverage, Utilization & Efficiency Index for AI coding tools"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

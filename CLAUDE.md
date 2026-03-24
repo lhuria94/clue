@@ -1,4 +1,4 @@
-# CLUEI — Code Leverage, Usage & Efficiency Index
+# CLUEI — Code Leverage, Utilization & Efficiency Index
 
 ## Quick Reference
 

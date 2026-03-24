@@ -14,7 +14,7 @@ function Write-Warn($msg) { Write-Host "  [WARN] $msg" -ForegroundColor Yellow }
 function Write-Fail($msg) { Write-Host "  [FAIL] $msg" -ForegroundColor Red }
 function Write-Step($msg) { Write-Host "`n-- $msg" -ForegroundColor White }
 
-Write-Host "`nCLUEI — Code Leverage, Usage & Efficiency Index" -ForegroundColor White
+Write-Host "`nCLUEI — Code Leverage, Utilization & Efficiency Index" -ForegroundColor White
 Write-Host ("=" * 55)
 
 # ── Step 1: Find Python 3.10+ ─────────────────────────────────

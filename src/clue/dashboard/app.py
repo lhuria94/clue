@@ -1506,4 +1506,4 @@ with tab_insights:
 
 # ── Footer ───────────────────────────────────────────────────────
 st.divider()
-st.caption("CLUEI — Code Leverage, Usage & Efficiency Index")
+st.caption("CLUEI — Code Leverage, Utilization & Efficiency Index")

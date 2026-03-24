@@ -30,7 +30,7 @@ fail() { printf "  ${RED}[FAIL]${RESET} %s\n" "$*"; }
 info() { printf "  ${CYAN}[..]${RESET}   %s\n" "$*"; }
 step() { printf "\n${BOLD}── %s${RESET}\n" "$*"; }
 
-printf "\n${BOLD}CLUEI${RESET} — Code Leverage, Usage & Efficiency Index\n"
+printf "\n${BOLD}CLUEI${RESET} — Code Leverage, Utilization & Efficiency Index\n"
 echo "═══════════════════════════════════════════════════════"
 
 # ── Locate project root ───────────────────────────────────────
