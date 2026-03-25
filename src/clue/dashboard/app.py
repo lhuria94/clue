@@ -198,7 +198,7 @@ SCRUB_MODE = os.environ.get("CLUE_SCRUB", "").lower() in ("1", "true", "yes")
 def load_data(_db_path: str, scrub: bool = False) -> dict:
     """Query SQLite and return dashboard data dict."""
     conn = init_db(Path(_db_path))
-    data = generate_dashboard_data(conn, git_correlation=True, scrub=scrub)
+    data = generate_dashboard_data(conn, git_correlation=True, scrub=scrub, claude_dir=CLAUDE_DIR)
     conn.close()
     return data
 
@@ -441,8 +441,8 @@ if project_scores:
 st.divider()
 
 # ── Tabbed Charts ────────────────────────────────────────────────
-tab_activity, tab_projects, tab_tools, tab_cost, tab_patterns, tab_journey, tab_insights = st.tabs(
-    ["Activity", "Projects", "Tools", "Cost", "Patterns", "Journey", "Insights"]
+tab_activity, tab_projects, tab_tools, tab_cost, tab_patterns, tab_journey, tab_insights, tab_advanced, tab_security = st.tabs(
+    ["Activity", "Projects", "Tools", "Cost", "Patterns", "Journey", "Insights", "Advanced", "Security"]
 )
 
 # ── Activity Tab ─────────────────────────────────────────────────
@@ -1503,6 +1503,387 @@ with tab_insights:
             "python -m clue merge alice.json bob.json -o team.json\n"
             "```"
         )
+
+# ── Advanced Usage Tab ───────────────────────────────────────────
+with tab_advanced:
+    adv = DATA.get("advanced_usage", {})
+    agent_types = adv.get("agent_types", [])
+    adv_skills = adv.get("skills", [])
+    task_tools_data = adv.get("task_tools", [])
+    adv_daily = adv.get("daily", [])
+    total_agents = adv.get("total_agents", 0)
+    parallel_count = adv.get("parallel_count", 0)
+
+    # Get the Advanced Usage dimension score
+    dims = DATA.get("efficiency_score", {}).get("dimensions", [])
+    adv_dim = next((d for d in dims if d["name"] == "Advanced Usage"), None)
+
+    if adv_dim:
+        score_col, detail_col = st.columns([1, 3])
+        with score_col:
+            st.metric("Advanced Usage Score", f"{adv_dim['score']}/100", help="Informational — does not affect composite score")
+            st.caption(f"Grade: **{adv_dim['grade']}**")
+        with detail_col:
+            st.markdown(f"**{adv_dim['explanation']}**")
+            if adv_dim.get("recommendations"):
+                for rec in adv_dim["recommendations"]:
+                    st.markdown(f"- {html.escape(rec)}")
+
+    # KPI row
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Agent Calls", total_agents)
+    k2.metric("Parallel Agents", parallel_count)
+    k3.metric("Skills Used", len(adv_skills))
+    k4.metric("Task Operations", sum(t["n"] for t in task_tools_data))
+
+    # Two-column layout: agent types + skills
+    col_left, col_right = st.columns(2)
+
+    with col_left:
+        st.subheader("Agent Types")
+        if agent_types:
+            fig = go.Figure(go.Bar(
+                x=[a["n"] for a in agent_types],
+                y=[a["type"] for a in agent_types],
+                orientation="h",
+                marker_color=CHART_COLORS[0],
+            ))
+            fig.update_layout(
+                height=max(200, len(agent_types) * 30),
+                margin=dict(l=0, r=0, t=10, b=10),
+                xaxis_title="Invocations",
+                template="plotly_white",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No typed subagent usage yet. Use `subagent_type` when spawning Agent tools.")
+
+    with col_right:
+        st.subheader("Skills")
+        if adv_skills:
+            fig = go.Figure(go.Bar(
+                x=[s["n"] for s in adv_skills],
+                y=[s["skill"] for s in adv_skills],
+                orientation="h",
+                marker_color=CHART_COLORS[1],
+            ))
+            fig.update_layout(
+                height=max(200, len(adv_skills) * 30),
+                margin=dict(l=0, r=0, t=10, b=10),
+                xaxis_title="Invocations",
+                template="plotly_white",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No skill usage yet. Try /commit, /review, /test to automate workflows.")
+
+    # Task tools
+    if task_tools_data:
+        st.subheader("Task Tool Usage")
+        cols = st.columns(len(task_tools_data))
+        for i, t in enumerate(task_tools_data):
+            cols[i].metric(t["tool"], t["n"])
+
+    # Daily trends
+    if adv_daily:
+        st.subheader("Daily Advanced Usage Trends")
+        # Filter to days with any activity
+        active_days = [d for d in adv_daily if d["agents"] + d["skills"] + d["tasks"] > 0]
+        if active_days:
+            fig = go.Figure()
+            dates = [d["d"] for d in active_days]
+            fig.add_trace(go.Scatter(
+                x=dates, y=[d["agents"] for d in active_days],
+                name="Agents", mode="lines+markers",
+                line=dict(color=CHART_COLORS[0]),
+            ))
+            fig.add_trace(go.Scatter(
+                x=dates, y=[d["parallel"] for d in active_days],
+                name="Parallel", mode="lines+markers",
+                line=dict(color=CHART_COLORS[2]),
+            ))
+            fig.add_trace(go.Scatter(
+                x=dates, y=[d["skills"] for d in active_days],
+                name="Skills", mode="lines+markers",
+                line=dict(color=CHART_COLORS[1]),
+            ))
+            fig.add_trace(go.Scatter(
+                x=dates, y=[d["tasks"] for d in active_days],
+                name="Tasks", mode="lines+markers",
+                line=dict(color=CHART_COLORS[3]),
+            ))
+            fig.update_layout(
+                height=350,
+                margin=dict(l=0, r=0, t=10, b=10),
+                template="plotly_white",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No advanced usage activity in the selected period.")
+
+# ── Security Tab ─────────────────────────────────────────────────
+with tab_security:
+    sec = DATA.get("security", {})
+    sec_findings = sec.get("findings", [])
+    sec_categories = sec.get("category_counts", {})
+    risk_score = sec.get("risk_score", 0)
+    sec_daily = sec.get("daily", [])
+
+    # Risk score hero
+    if risk_score == 0:
+        risk_color = COLORS["green"]
+        risk_label = "Clean"
+    elif risk_score < 25:
+        risk_color = COLORS["amber"]
+        risk_label = "Low Risk"
+    elif risk_score < 50:
+        risk_color = COLORS["orange"]
+        risk_label = "Moderate Risk"
+    else:
+        risk_color = COLORS["rose"]
+        risk_label = "High Risk"
+
+    r1, r2, r3 = st.columns([1, 1, 2])
+    r1.markdown(
+        f"<div style='text-align:center;padding:1rem;'>"
+        f"<div style='font-size:2.5rem;font-weight:700;color:{risk_color}'>{risk_score}</div>"
+        f"<div style='color:{risk_color};font-weight:600'>{risk_label}</div>"
+        f"<div style='font-size:0.8rem;opacity:0.6'>Risk Score (0=clean)</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    r2.metric("Total Findings", len(sec_findings))
+    with r3:
+        if not sec_findings:
+            st.success("No security issues detected in your AI usage patterns.")
+        else:
+            critical = sum(1 for f in sec_findings if f["severity"] == "critical")
+            high = sum(1 for f in sec_findings if f["severity"] == "high")
+            medium = sum(1 for f in sec_findings if f["severity"] == "medium")
+            parts = []
+            if critical:
+                parts.append(f"**{critical} critical**")
+            if high:
+                parts.append(f"**{high} high**")
+            if medium:
+                parts.append(f"{medium} medium")
+            st.warning(f"Found: {', '.join(parts)}")
+
+    # Category breakdown
+    if sec_categories:
+        st.subheader("Finding Categories")
+
+        category_labels = {
+            "secrets_in_prompts": "Secrets in Prompts",
+            "dangerous_commands": "Dangerous Commands",
+            "sensitive_file_refs": "Sensitive File References",
+            "hook_bypass": "Git Hook Bypass (--no-verify)",
+            "force_push": "Force Push Requests",
+            "sandbox_bypass": "Sandbox Bypass",
+            "broad_bash_access": "Broad Bash Access",
+            "high_agent_autonomy": "High Agent Autonomy",
+            "wildcard_permissions": "Wildcard Permissions (*)",
+            "broad_bash_permissions": "Broad Bash Permissions",
+            "broad_write_permissions": "Broad Write Permissions",
+            "broad_edit_permissions": "Broad Edit Permissions",
+            "broad_agent_permissions": "Broad Agent Permissions",
+            "prompt_injection": "Prompt Injection Attempt",
+            "data_exfiltration": "Data Exfiltration Pattern",
+            "mcp_servers": "MCP Servers Configured",
+            "secrets_in_responses": "Secrets in AI Responses",
+        }
+
+        category_descriptions = {
+            "secrets_in_prompts": "API keys, tokens, or credentials detected in prompt text. These get sent to the AI model.",
+            "dangerous_commands": "Commands like rm -rf /, chmod 777, or curl|sh detected in prompts.",
+            "sensitive_file_refs": "References to .env, credentials, private keys, or other sensitive files.",
+            "hook_bypass": "Requests to skip git hooks with --no-verify. Hooks exist for a reason.",
+            "force_push": "Force push can overwrite team members' work on shared branches.",
+            "sandbox_bypass": "dangerouslyDisableSandbox removes all execution safety boundaries.",
+            "broad_bash_access": "High % of tool calls are Bash — consider restricting to specific commands.",
+            "high_agent_autonomy": "Many agent calls per session may indicate overly autonomous operation.",
+            "wildcard_permissions": "Global '*' in ~/.claude/settings.json allows ALL tools without human approval.",
+            "broad_bash_permissions": "Bash(*) in settings allows arbitrary shell commands without review.",
+            "broad_write_permissions": "Write(*) in settings allows creating any file without review.",
+            "broad_edit_permissions": "Edit(*) in settings allows modifying any file without review.",
+            "broad_agent_permissions": "Agent(*) in settings allows spawning subagents without review.",
+            "prompt_injection": "Prompt injection attempt detected — someone tried to override AI instructions.",
+            "data_exfiltration": "Data exfiltration pattern — sending secrets/credentials to external services via curl/nc.",
+            "mcp_servers": "MCP servers expand attack surface with external tool providers. Ensure each is from a trusted source.",
+            "secrets_in_responses": "AI response contained a potential secret — may have echoed back a pasted credential or generated one.",
+        }
+
+        severity_colors = {
+            "secrets_in_prompts": COLORS["rose"],
+            "dangerous_commands": COLORS["rose"],
+            "sandbox_bypass": COLORS["rose"],
+            "wildcard_permissions": COLORS["rose"],
+            "broad_bash_permissions": COLORS["rose"],
+            "broad_write_permissions": COLORS["orange"],
+            "hook_bypass": COLORS["orange"],
+            "broad_edit_permissions": COLORS["amber"],
+            "prompt_injection": COLORS["rose"],
+            "data_exfiltration": COLORS["rose"],
+            "broad_agent_permissions": COLORS["amber"],
+            "force_push": COLORS["amber"],
+            "sensitive_file_refs": COLORS["amber"],
+            "broad_bash_access": COLORS["amber"],
+            "high_agent_autonomy": COLORS["blue"],
+            "mcp_servers": COLORS["amber"],
+            "secrets_in_responses": COLORS["rose"],
+        }
+
+        for cat, count in sorted(sec_categories.items(), key=lambda x: -x[1]):
+            label = category_labels.get(cat, cat)
+            desc = category_descriptions.get(cat, "")
+            color = severity_colors.get(cat, COLORS["amber"])
+            # Collect location details for settings-sourced findings
+            cat_findings = [f for f in sec_findings if f.get("category") == cat]
+            locations = sorted({f["location"] for f in cat_findings if f.get("location")})
+            location_html = ""
+            if locations:
+                loc_parts = [html.escape(loc) for loc in locations]
+                location_html = (
+                    f"<br><span style='font-size:0.8rem;color:{COLORS['blue']}'>"
+                    f"&#x1f4c1; {' | '.join(loc_parts)}</span>"
+                )
+            st.markdown(
+                f"<div style='padding:0.5rem 0;border-left:3px solid {color};padding-left:1rem;margin-bottom:0.5rem'>"
+                f"<strong>{html.escape(label)}</strong> &mdash; {count} finding{'s' if count != 1 else ''}<br>"
+                f"<span style='font-size:0.85rem;opacity:0.7'>{html.escape(desc)}</span>"
+                f"{location_html}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+    # Security best practices checklist
+    st.subheader("Security Checklist")
+
+    checks = [
+        ("No wildcard (*) permissions in settings", sec_categories.get("wildcard_permissions", 0) == 0),
+        ("No Bash(*) wildcard in settings", sec_categories.get("broad_bash_permissions", 0) == 0),
+        ("No Write(*) wildcard in settings", sec_categories.get("broad_write_permissions", 0) == 0),
+        ("No secrets in prompts", sec_categories.get("secrets_in_prompts", 0) == 0),
+        ("No sandbox bypasses", sec_categories.get("sandbox_bypass", 0) == 0),
+        ("No git hook bypasses", sec_categories.get("hook_bypass", 0) == 0),
+        ("No dangerous shell commands", sec_categories.get("dangerous_commands", 0) == 0),
+        ("No force push requests", sec_categories.get("force_push", 0) == 0),
+        ("No sensitive file references in prompts", sec_categories.get("sensitive_file_refs", 0) == 0),
+        ("No prompt injection patterns detected", sec_categories.get("prompt_injection", 0) == 0),
+        ("Bash usage below 40% of tool calls", sec_categories.get("broad_bash_access", 0) == 0),
+        ("No secrets leaked in AI responses", sec_categories.get("secrets_in_responses", 0) == 0),
+        ("No data exfiltration patterns", sec_categories.get("data_exfiltration", 0) == 0),
+        ("MCP servers reviewed and trusted", sec_categories.get("mcp_servers", 0) == 0),
+        ("No bypassPermissions or autoApprove enabled",
+         not any(f.get("setting") in ("bypassPermissions", "autoApprove")
+                 for f in sec.get("settings_findings", []))),
+    ]
+
+    for label, passed in checks:
+        icon = "+" if passed else "-"
+        color = COLORS["green"] if passed else COLORS["rose"]
+        st.markdown(
+            f"<span style='color:{color};font-weight:600'>[{icon}]</span> {html.escape(label)}",
+            unsafe_allow_html=True,
+        )
+
+    # Daily security trend
+    if sec_daily:
+        st.subheader("Security Findings Over Time")
+        fig = go.Figure()
+        dates = [d["d"] for d in sec_daily]
+        fig.add_trace(go.Bar(
+            x=dates, y=[d.get("critical", 0) for d in sec_daily],
+            name="Critical", marker_color=COLORS["rose"],
+        ))
+        fig.add_trace(go.Bar(
+            x=dates, y=[d.get("high", 0) for d in sec_daily],
+            name="High", marker_color=COLORS["orange"],
+        ))
+        fig.add_trace(go.Bar(
+            x=dates, y=[d.get("medium", 0) for d in sec_daily],
+            name="Medium", marker_color=COLORS["amber"],
+        ))
+        fig.update_layout(
+            barmode="stack",
+            height=300,
+            margin=dict(l=0, r=0, t=10, b=10),
+            template="plotly_white",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Recommendations
+    st.subheader("Recommendations")
+    recs = []
+    if sec_categories.get("secrets_in_prompts", 0) > 0:
+        recs.append(
+            "**Never paste secrets into prompts.** API keys and tokens sent to AI models "
+            "are logged in conversation history. Use environment variables and reference them by name."
+        )
+    if sec_categories.get("sandbox_bypass", 0) > 0:
+        recs.append(
+            "**Remove dangerouslyDisableSandbox.** The sandbox prevents destructive operations. "
+            "Instead, add specific allowed commands to your settings."
+        )
+    if sec_categories.get("hook_bypass", 0) > 0:
+        recs.append(
+            "**Don't skip git hooks.** Pre-commit hooks catch lint errors, secrets, and formatting. "
+            "Fix the underlying issue instead of bypassing with --no-verify."
+        )
+    if sec_categories.get("wildcard_permissions", 0) > 0:
+        recs.append(
+            "**Remove wildcard (*) from permissions.** Global wildcards let every tool run "
+            "without approval. Add only the specific tools you trust: `Read(*)`, `Glob(*)`, `Grep(*)`."
+        )
+    if sec_categories.get("broad_bash_permissions", 0) > 0:
+        recs.append(
+            "**Replace Bash(*) with specific commands.** Instead of `Bash(*)`, allow specific "
+            "commands: `Bash(pytest*)`, `Bash(git status)`, `Bash(npm test)`. "
+            "Wildcards let arbitrary shell commands run without review."
+        )
+    if sec_categories.get("broad_write_permissions", 0) > 0:
+        recs.append(
+            "**Replace Write(*) with specific paths.** Allow writing only to your project: "
+            "`Write(src/*)`, `Write(tests/*)`. Wildcards could write to any system file."
+        )
+    if sec_categories.get("prompt_injection", 0) > 0:
+        recs.append(
+            "**Prompt injection detected.** Someone (or injected text) attempted to override "
+            "AI instructions. Review affected sessions — this may indicate malicious content "
+            "in pasted code or files being read."
+        )
+    if sec_categories.get("secrets_in_responses", 0) > 0:
+        recs.append(
+            "**Secrets detected in AI responses.** The AI echoed back or generated credentials. "
+            "Review affected sessions and rotate any exposed secrets immediately."
+        )
+    if sec_categories.get("data_exfiltration", 0) > 0:
+        recs.append(
+            "**Data exfiltration pattern detected.** Commands sending credentials to external "
+            "services were found. Review immediately — this could indicate a compromised session."
+        )
+    if sec_categories.get("broad_bash_access", 0) > 0:
+        recs.append(
+            "**Restrict Bash permissions.** High Bash usage may indicate overly broad tool access. "
+            "Use dedicated tools (Read, Edit, Grep) instead of shell commands where possible."
+        )
+    if sec_categories.get("force_push", 0) > 0:
+        recs.append(
+            "**Avoid force push on shared branches.** Use `--force-with-lease` if you must, "
+            "and never force push to main/master."
+        )
+    if sec_categories.get("mcp_servers", 0) > 0:
+        recs.append(
+            "**Audit MCP servers.** Each MCP server can expose arbitrary tools to the AI. "
+            "Only configure servers from trusted sources and review their capabilities."
+        )
+    if not recs:
+        recs.append("Your AI usage patterns look secure. Keep it up!")
+
+    for rec in recs:
+        st.markdown(f"- {rec}")
 
 # ── Footer ───────────────────────────────────────────────────────
 st.divider()

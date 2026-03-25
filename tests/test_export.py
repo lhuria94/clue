@@ -9,6 +9,7 @@ import pytest
 
 from clue.db import insert_prompts, insert_sessions, insert_turns
 from clue.export import (
+    _analyse_claude_settings,
     _compute_prompt_learning,
     _compute_session_insights,
     _compute_weekly_digest,
@@ -67,7 +68,7 @@ class TestGenerateDashboardData:
         score = data["efficiency_score"]
         assert 0 <= score["overall"] <= 100
         assert score["grade"] in ("A", "B", "C", "D", "F")
-        assert len(score["dimensions"]) == 7
+        assert len(score["dimensions"]) == 8
         assert isinstance(score["top_recommendations"], list)
 
     def test_project_scores_included(self, db_conn, sample_prompts, sample_turns):
@@ -667,3 +668,201 @@ class TestComputePromptLearning:
             assert "pattern" in entry
             assert "count" in entry
             assert "correction_rate" in entry
+
+
+class TestAnalyseClaudeSettings:
+    """Unit tests for _analyse_claude_settings() security posture analysis."""
+
+    def test_no_settings_file(self, tmp_path, monkeypatch):
+        """Missing settings.json returns empty findings."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        assert _analyse_claude_settings() == []
+
+    def test_empty_settings(self, tmp_path, monkeypatch):
+        """Empty settings returns empty findings."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        (settings_dir / "settings.json").write_text("{}")
+        assert _analyse_claude_settings() == []
+
+    def test_invalid_json(self, tmp_path, monkeypatch):
+        """Malformed JSON returns empty findings (no crash)."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        (settings_dir / "settings.json").write_text("{not valid json")
+        assert _analyse_claude_settings() == []
+
+    def test_detects_global_wildcard(self, tmp_path, monkeypatch):
+        """Global '*' in allow list flagged as critical."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        import json
+        (settings_dir / "settings.json").write_text(json.dumps({
+            "permissions": {"allow": ["*"]}
+        }))
+        findings = _analyse_claude_settings()
+        cats = {f["category"] for f in findings}
+        assert "wildcard_permissions" in cats
+        assert any(f["severity"] == "critical" for f in findings)
+
+    def test_detects_bash_wildcard(self, tmp_path, monkeypatch):
+        """Bash(*) flagged as high severity."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        import json
+        (settings_dir / "settings.json").write_text(json.dumps({
+            "permissions": {"allow": ["Bash(*)"]}
+        }))
+        findings = _analyse_claude_settings()
+        cats = {f["category"] for f in findings}
+        assert "broad_bash_permissions" in cats
+
+    def test_detects_write_wildcard(self, tmp_path, monkeypatch):
+        """Write(*) flagged."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        import json
+        (settings_dir / "settings.json").write_text(json.dumps({
+            "permissions": {"allow": ["Write(*)"]}
+        }))
+        findings = _analyse_claude_settings()
+        cats = {f["category"] for f in findings}
+        assert "broad_write_permissions" in cats
+
+    def test_detects_edit_wildcard(self, tmp_path, monkeypatch):
+        """Edit(*) flagged."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        import json
+        (settings_dir / "settings.json").write_text(json.dumps({
+            "permissions": {"allow": ["Edit(*)"]}
+        }))
+        findings = _analyse_claude_settings()
+        cats = {f["category"] for f in findings}
+        assert "broad_edit_permissions" in cats
+
+    def test_detects_agent_wildcard(self, tmp_path, monkeypatch):
+        """Agent(*) flagged."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        import json
+        (settings_dir / "settings.json").write_text(json.dumps({
+            "permissions": {"allow": ["Agent(*)"]}
+        }))
+        findings = _analyse_claude_settings()
+        cats = {f["category"] for f in findings}
+        assert "broad_agent_permissions" in cats
+
+    def test_multiple_wildcards(self, tmp_path, monkeypatch):
+        """Multiple wildcard entries produce multiple findings."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        import json
+        (settings_dir / "settings.json").write_text(json.dumps({
+            "permissions": {"allow": ["*", "Bash(*)", "Write(*)"]}
+        }))
+        findings = _analyse_claude_settings()
+        cats = {f["category"] for f in findings}
+        assert "wildcard_permissions" in cats
+        assert "broad_bash_permissions" in cats
+        assert "broad_write_permissions" in cats
+        assert len(findings) >= 3
+
+    def test_non_string_entries_skipped(self, tmp_path, monkeypatch):
+        """Non-string entries in allow list are skipped gracefully."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        import json
+        (settings_dir / "settings.json").write_text(json.dumps({
+            "permissions": {"allow": [42, None, "Bash(*)"]}
+        }))
+        findings = _analyse_claude_settings()
+        cats = [f["category"] for f in findings]
+        assert "broad_bash_permissions" in cats
+        # Non-string entries (42, None) should be skipped — no crash
+        assert all(isinstance(f["category"], str) for f in findings)
+
+    def test_safe_settings_no_findings(self, tmp_path, monkeypatch):
+        """Specific tool permissions (no wildcards) produce no findings."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        import json
+        (settings_dir / "settings.json").write_text(json.dumps({
+            "permissions": {"allow": ["Read", "Glob", "Grep", "Bash(git status)"]}
+        }))
+        assert _analyse_claude_settings() == []
+
+    def test_detects_bypass_permissions(self, tmp_path, monkeypatch):
+        """bypassPermissions=true flagged as critical."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        import json
+        (settings_dir / "settings.json").write_text(json.dumps({
+            "bypassPermissions": True,
+        }))
+        findings = _analyse_claude_settings()
+        cats = {f["category"] for f in findings}
+        assert "wildcard_permissions" in cats
+        assert any(f["severity"] == "critical" for f in findings)
+
+    def test_detects_auto_approve(self, tmp_path, monkeypatch):
+        """autoApprove=true flagged as critical."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        import json
+        (settings_dir / "settings.json").write_text(json.dumps({
+            "autoApprove": True,
+        }))
+        findings = _analyse_claude_settings()
+        assert any("autoApprove" in f.get("detail", "") for f in findings)
+
+    def test_detects_broad_allows_empty_deny(self, tmp_path, monkeypatch):
+        """Broad allows with empty deny list flagged."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        import json
+        (settings_dir / "settings.json").write_text(json.dumps({
+            "permissions": {"allow": ["Bash(*)"], "deny": []},
+        }))
+        findings = _analyse_claude_settings()
+        details = " ".join(f.get("detail", "") for f in findings)
+        assert "empty deny list" in details
+
+    def test_detects_mcp_servers(self, tmp_path, monkeypatch):
+        """MCP servers in settings flagged for review."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        import json
+        (settings_dir / "settings.json").write_text(json.dumps({
+            "mcpServers": {
+                "my-server": {"command": "node", "args": ["server.js"]},
+            },
+        }))
+        findings = _analyse_claude_settings()
+        cats = {f["category"] for f in findings}
+        assert "mcp_servers" in cats
+
+    def test_bypass_permissions_false_no_finding(self, tmp_path, monkeypatch):
+        """bypassPermissions=false should not trigger a finding."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        import json
+        (settings_dir / "settings.json").write_text(json.dumps({
+            "bypassPermissions": False,
+        }))
+        assert _analyse_claude_settings() == []

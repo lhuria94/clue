@@ -120,6 +120,22 @@ class TestExtractConversations:
         assert "Read" in tool_names
         assert "Edit" in tool_names
         assert "Bash" in tool_names
+        assert "Agent" in tool_names
+        assert "Skill" in tool_names
+
+    def test_extracts_agent_metadata(self, mock_claude_dir):
+        turns = extract_conversations(mock_claude_dir)
+        agent_turns = [t for t in turns if t.tool_name == "Agent"]
+        assert len(agent_turns) >= 1
+        agent = agent_turns[0]
+        assert agent.tool_input_subagent_type == "researcher"
+        assert agent.tool_input_run_in_background is True
+
+    def test_extracts_skill_metadata(self, mock_claude_dir):
+        turns = extract_conversations(mock_claude_dir)
+        skill_turns = [t for t in turns if t.tool_name == "Skill"]
+        assert len(skill_turns) >= 1
+        assert skill_turns[0].tool_input_skill == "commit"
 
     def test_subagent_flag(self, mock_claude_dir):
         turns = extract_conversations(mock_claude_dir)

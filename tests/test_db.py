@@ -31,7 +31,7 @@ class TestInitDb:
 
     def test_schema_version(self, db_conn):
         cur = db_conn.execute("SELECT MAX(version) FROM schema_version")
-        assert cur.fetchone()[0] == 2
+        assert cur.fetchone()[0] == 3
 
     def test_idempotent(self, tmp_path):
         db_path = tmp_path / "test.db"
@@ -39,7 +39,7 @@ class TestInitDb:
         conn1.close()
         conn2 = init_db(db_path)
         cur = conn2.execute("SELECT MAX(version) FROM schema_version")
-        assert cur.fetchone()[0] == 2
+        assert cur.fetchone()[0] == 3
         conn2.close()
 
     def test_wal_mode(self, db_conn):
@@ -105,6 +105,42 @@ class TestInsertTurns:
         cur = db_conn.execute("SELECT cwd, git_branch, claude_version, stop_reason FROM turns")
         row = cur.fetchone()
         assert row == ("/home/user/proj", "main", "2.1.75", "end_turn")
+
+    def test_insert_with_schema3_fields(self, db_conn):
+        """Schema-3 advanced usage columns round-trip correctly."""
+        turn = ConversationTurn(
+            session_id="s1",
+            project="proj",
+            role="assistant",
+            model="claude-sonnet-4-6",
+            tool_name="Agent",
+            usage=TokenUsage(input_tokens=100, output_tokens=50),
+            tool_input_subagent_type="researcher",
+            tool_input_run_in_background=True,
+            tool_input_skill=None,
+        )
+        insert_turns(db_conn, [turn])
+        cur = db_conn.execute(
+            "SELECT tool_input_subagent_type, tool_input_run_in_background, tool_input_skill FROM turns"
+        )
+        row = cur.fetchone()
+        assert row == ("researcher", 1, None)
+
+    def test_insert_with_skill_field(self, db_conn):
+        """Schema-3 skill column round-trips correctly."""
+        turn = ConversationTurn(
+            session_id="s1",
+            project="proj",
+            role="assistant",
+            model="claude-sonnet-4-6",
+            tool_name="Skill",
+            usage=TokenUsage(input_tokens=50, output_tokens=30),
+            tool_input_skill="commit",
+        )
+        insert_turns(db_conn, [turn])
+        cur = db_conn.execute("SELECT tool_input_skill FROM turns")
+        row = cur.fetchone()
+        assert row == ("commit",)
 
 
 class TestClearDb:

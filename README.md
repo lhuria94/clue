@@ -42,7 +42,7 @@ git clone https://github.com/lhuria94/clue.git; cd clue; .\setup.ps1
 | 2 | Creates `.venv/` virtual environment | Yes |
 | 3 | Installs `clue` + dev tools into venv | Yes |
 | 4 | Offers to install [Taskfile](https://taskfile.dev) for shortcuts (optional) | Prompted |
-| 5 | Runs 180-test suite to verify everything works | Yes |
+| 5 | Runs 232-test suite to verify everything works | Yes |
 | 6 | Extracts all your Claude Code data from `~/.claude/` | Yes |
 | 7 | Installs PostStop hook for continuous auto-capture | Yes |
 | 8 | Prints your AI Efficiency Score with recommendations | Yes |
@@ -76,11 +76,11 @@ git clone https://github.com/lhuria94/clue.git; cd clue; .\setup.ps1
 | **Schema** | Versioned migrations | `db.py` runs numbered migrations on startup. Add columns without breaking existing databases |
 | **Watermarks** | SQLite table | File mtimes tracked per-source. Incremental extraction only re-parses changed files |
 | **Dashboard** | Streamlit + Plotly | Interactive, auto-refreshing, live SQLite queries, native dark/light theme |
-| **Scoring** | Python weighted composite | 7 dimensions, 0-100 per dimension, weighted average. Deterministic, no ML |
+| **Scoring** | Python weighted composite | 7 weighted + 1 informational dimensions, 0-100 per dimension, weighted average. Deterministic, no ML |
 | **Hook** | Claude Code PostStop | Fires after every session. Runs incremental extract in background. Zero config after setup |
 | **Team sharing** | JSON export + merge | Each user exports locally. Merge command combines. No shared infrastructure |
 | **Privacy** | `--scrub` flag | Strips all prompt text from exports. Aggregated metrics only. No absolute paths in dashboard |
-| **Tests** | pytest | 186 tests across unit, integration, security, and CLI layers |
+| **Tests** | pytest | 232 tests across unit, integration, security, and CLI layers |
 | **Task runner** | Taskfile (optional) | Shortcuts for common operations. Falls back to `python -m clue` if not installed |
 | **Cross-platform** | `pathlib` + platform detection | Windows backslash path encoding, PowerShell setup script, platform-aware doctor |
 
@@ -118,7 +118,7 @@ Without Taskfile:
 
 ## AI Efficiency Score
 
-Every user gets scored **0-100** across 7 weighted dimensions:
+Every user gets scored **0-100** across 7 weighted dimensions + 1 informational:
 
 | Dimension | Weight | What it measures | Score drivers |
 |---|---|---|---|
@@ -129,6 +129,7 @@ Every user gets scored **0-100** across 7 weighted dimensions:
 | **Session Discipline** | 10% | Focused, structured sessions? | Depth range (5-40), tool workflow structure |
 | **Cost Awareness** | 10% | Right model for the task? | Model mix across Opus/Sonnet/Haiku tiers |
 | **Iteration Efficiency** | 20% | Converging on results quickly? | Correction rate, AI leverage, structured workflows |
+| **Advanced Usage** | 0% | Leveraging advanced features? | Agent types, parallel execution, skill adoption, task discipline (informational) |
 
 ### Example output
 
@@ -208,6 +209,18 @@ Advanced analytics — weekly digest with correction rate trends, cheapest vs co
 
 ![Insights Tab](docs/screenshots/tab-insights.png)
 
+### Advanced
+
+Agentic maturity metrics — agent type distribution (researcher, reviewer, debugger, etc.), skill adoption (commit, review, test), task tool usage (TaskCreate, TaskUpdate), parallel execution patterns. Daily trend chart tracks advanced feature adoption over time.
+
+![Advanced Tab](docs/screenshots/tab-advanced.png)
+
+### Security
+
+AI usage security posture — risk score (0=clean), finding categories with severity, security checklist, daily trend chart, and actionable recommendations. Scans prompts for secrets, dangerous commands, prompt injection, data exfiltration. Analyses `~/.claude/settings.json` (global + project) for wildcard permissions, MCP servers, bypass modes. Scans AI responses for leaked credentials. Audits CLAUDE.md files for risky instructions.
+
+![Security Tab](docs/screenshots/tab-security.png)
+
 ---
 
 ## Team Usage
@@ -226,10 +239,11 @@ Advanced analytics — weekly digest with correction rate trends, cheapest vs co
 
 **Privacy guarantees:**
 - All data stays local — nothing sent anywhere
-- `--scrub` removes all prompt text from exports
+- `--scrub` removes all prompt text and project names from exports
 - Dashboard JSON contains aggregated metrics only
 - No absolute file paths in export
 - No conversation content in export
+- Security findings contain category + severity only, never the actual secret text
 
 ---
 
@@ -268,12 +282,13 @@ src/clue/
 ├── models.py           # Dataclasses: Prompt, TokenUsage, ConversationTurn, Session, EfficiencyScore
 ├── extractor.py        # Parses ~/.claude/ with incremental watermarks, cross-platform paths
 ├── db.py               # SQLite + WAL + versioned migrations + watermark table
-├── scorer.py           # 7-dimension scoring engine with semantic analysis + recommendations
-├── export.py           # SQL queries → JSON with scores, scrub mode, git correlation
+├── patterns.py        # Shared regex patterns (scoring + security detection)
+├── scorer.py           # 7+1 dimension scoring engine with semantic analysis + recommendations
+├── export.py           # SQL queries → JSON with scores, security analysis, scrub mode, git correlation
 ├── git_utils.py        # Git log queries for session-outcome correlation (subprocess)
 ├── pipeline.py         # Extraction pipeline shared by CLI and dashboard
 └── dashboard/
-    └── app.py          # Streamlit dashboard with 7 tabs + live SQLite queries
+    └── app.py          # Streamlit dashboard with 9 tabs + live SQLite queries
 ```
 
 Data flow:
@@ -281,10 +296,10 @@ Data flow:
 ~/.claude/ files
     ↓ extractor (watermarks for incremental)
 SQLite (WAL mode, versioned schema)
-    ↓ scorer (7 dimensions, weighted)
-    ↓ export (SQL → JSON, optional scrub + git correlation)
+    ↓ scorer (7+1 dimensions, weighted)
+    ↓ export (SQL → JSON, security analysis, optional scrub + git correlation)
     ↓ git_utils (session → commit correlation via local git)
-Streamlit + Plotly dashboard (7 tabs, live queries, auto-refresh)
+Streamlit + Plotly dashboard (9 tabs, live queries, auto-refresh)
 ```
 
 ---
@@ -294,9 +309,11 @@ Streamlit + Plotly dashboard (7 tabs, live queries, auto-refresh)
 | Source | Location | Fields extracted |
 |---|---|---|
 | Prompt history | `~/.claude/history.jsonl` | timestamp, project, sessionId, text, char_length |
-| Conversations | `~/.claude/projects/**/*.jsonl` | model, token usage (input/output/cache), tools, cwd, gitBranch, version, stop_reason |
+| Conversations | `~/.claude/projects/**/*.jsonl` | model, token usage (input/output/cache), tools, tool inputs (subagent_type, skill, run_in_background), cwd, gitBranch, version, stop_reason |
 | Subagent logs | `~/.claude/projects/**/subagents/*.jsonl` | Same as conversations, flagged `is_subagent` |
 | Session metadata | `~/.claude/sessions/*.json` | pid, sessionId, cwd, startedAt |
+| Settings | `~/.claude/settings.json`, `.claude/settings.json` | Permissions allow/deny lists, MCP servers, bypass modes |
+| CLAUDE.md | `./CLAUDE.md`, `~/.claude/CLAUDE.md` | Scanned for risky instructions (--no-verify, sandbox bypass, secrets) |
 
 ---
 
@@ -308,7 +325,7 @@ task test-unit      # Unit tests only
 task test-integration # Integration + security tests
 ```
 
-**186 tests** across 4 layers:
+**232 tests** across 4 layers:
 
 | Layer | Files | What it covers |
 |---|---|---|

@@ -88,6 +88,8 @@ def main():
             ("Patterns", "tab-patterns.png"),
             ("Journey", "tab-journey.png"),
             ("Insights", "tab-insights.png"),
+            ("Advanced", "tab-advanced.png"),
+            ("Security", "tab-security.png"),
         ]
 
         # Find tab bar Y position

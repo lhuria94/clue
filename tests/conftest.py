@@ -166,6 +166,65 @@ def mock_claude_dir(tmp_path):
             },
             "timestamp": "2025-03-21T10:00:05.000Z",
         },
+        # Advanced usage: Agent with subagent_type and run_in_background
+        {
+            "parentUuid": "uuid-1",
+            "type": "assistant",
+            "message": {
+                "id": "msg-adv1",
+                "role": "assistant",
+                "model": "claude-sonnet-4-6",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "Agent",
+                        "id": "tu-4",
+                        "input": {
+                            "description": "research auth patterns",
+                            "prompt": "Find auth patterns",
+                            "subagent_type": "researcher",
+                            "run_in_background": True,
+                        },
+                    },
+                ],
+                "usage": {
+                    "input_tokens": 200,
+                    "output_tokens": 100,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                },
+                "stop_reason": "tool_use",
+            },
+            "requestId": "req-adv1",
+            "timestamp": "2025-03-21T10:00:06.000Z",
+        },
+        # Advanced usage: Skill invocation
+        {
+            "parentUuid": "uuid-1",
+            "type": "assistant",
+            "message": {
+                "id": "msg-adv2",
+                "role": "assistant",
+                "model": "claude-sonnet-4-6",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "Skill",
+                        "id": "tu-5",
+                        "input": {"skill": "commit"},
+                    },
+                ],
+                "usage": {
+                    "input_tokens": 150,
+                    "output_tokens": 80,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                },
+                "stop_reason": "tool_use",
+            },
+            "requestId": "req-adv2",
+            "timestamp": "2025-03-21T10:00:07.000Z",
+        },
     ]
     conv_file = project_dir / "session-001.jsonl"
     conv_file.write_text("\n".join(json.dumps(c) for c in conversation) + "\n")

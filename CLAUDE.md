@@ -3,7 +3,7 @@
 ## Quick Reference
 
 ```bash
-task test               # Run 186 tests with 87% coverage ratchet
+task test               # Run 232 tests with 87% coverage ratchet
 task lint               # Ruff lint
 task lint-imports       # Import-linter architecture check
 task check              # All three above
@@ -24,13 +24,13 @@ Without Taskfile: `.venv/bin/pytest tests/ -v`
 ```
 patterns.py    ← Shared regex patterns (no internal imports)
 models.py      ← Pure domain (dataclasses, no imports from clue)
-scorer.py      ← Domain logic: 7-dimension scoring engine (depends on models + patterns)
+scorer.py      ← Domain logic: 7+1 dimension scoring engine (depends on models + patterns)
 extractor.py   ← Infrastructure: reads ~/.claude/ JSONL files
 db.py          ← Infrastructure: SQLite persistence (uses patterns)
-export.py      ← Application: SQL queries → dashboard data dict (uses patterns)
+export.py      ← Application: SQL queries → dashboard data dict + security analysis (uses patterns)
 pipeline.py    ← Extraction orchestration (shared by cli + dashboard)
 cli.py         ← Interface: argparse commands
-dashboard/     ← Interface: Streamlit UI
+dashboard/     ← Interface: Streamlit UI (9 tabs including Advanced + Security)
 ```
 
 Dependency direction enforced by import-linter (8 contracts in `pyproject.toml`).

@@ -1,6 +1,6 @@
 """AI usage efficiency scoring engine.
 
-Scores across 7 dimensions to produce a composite 0-100 score:
+Scores across 7 weighted dimensions + 1 informational dimension:
 1. Prompt Quality       (20%) — Are prompts specific, structured, and context-rich?
 2. Cost Efficiency      (15%) — Actual spend per session, cost distribution consistency
 3. Wasted Spend         (10%) — What fraction of cost goes to corrections/rework
@@ -8,6 +8,7 @@ Scores across 7 dimensions to produce a composite 0-100 score:
 5. Session Discipline   (10%) — Focused sessions, tool workflow within sessions
 6. Cost Awareness       (10%) — Model selection appropriate to task complexity
 7. Iteration Efficiency (20%) — Correction rate, first-attempt success, workflow quality
+8. Advanced Usage        (0%) — Agentic maturity, skills, parallel execution (informational)
 
 This module is infrastructure-free: it accepts pre-queried ScoringData/TrendData
 and returns pure domain objects. All SQL lives in db.py.
@@ -740,6 +741,138 @@ def _score_iteration_efficiency(data: ScoringData) -> DimensionScore:
     )
 
 
+def _score_advanced_usage(data: ScoringData) -> DimensionScore:
+    """Score advanced usage maturity — agentic patterns, skills, task discipline.
+
+    Informational dimension (weight=0) — does not affect composite score.
+    Measures how effectively the user leverages advanced Claude Code features:
+    - Agentic maturity: % of sessions using the Agent tool
+    - Parallel execution: % of Agent calls with run_in_background
+    - Skill adoption: distinct skills used
+    - Task discipline: TaskCreate/TaskUpdate usage patterns
+    """
+    weight = 0.0  # Informational only
+
+    agent_types = data.agent_type_counts
+    parallel = data.parallel_invocations
+    skills = data.skills_used
+    task_tools = data.task_tool_counts
+    tools = data.tool_counts
+
+    total_agent_calls = sum(agent_types.values()) if agent_types else 0
+    total_tool_calls = sum(tools.values()) if tools else 0
+    total_skill_calls = sum(skills.values()) if skills else 0
+    total_task_calls = sum(task_tools.values()) if task_tools else 0
+
+    if total_tool_calls == 0:
+        return DimensionScore(
+            name="Advanced Usage",
+            score=0,
+            weight=weight,
+            grade="N/A",
+            explanation="No tool usage data.",
+            recommendations=["Use Claude Code to generate advanced usage data."],
+        )
+
+    # --- Agentic maturity (0-30) ---
+    agent_pct = total_agent_calls / total_tool_calls * 100 if total_tool_calls else 0
+    # Using agents at all is good; 5-20% of calls being Agent is ideal
+    if agent_pct == 0:
+        agentic_score = 0.0
+    elif agent_pct < 5:
+        agentic_score = 15.0
+    elif agent_pct <= 20:
+        agentic_score = 30.0
+    else:
+        agentic_score = 25.0  # Over-reliance on agents
+
+    # Bonus for using typed subagents (not just generic)
+    typed_agents = sum(v for k, v in agent_types.items() if k is not None)
+    if total_agent_calls > 0 and typed_agents / total_agent_calls > 0.5:
+        agentic_score = min(agentic_score + 5, 30)
+
+    # --- Parallel execution (0-25) ---
+    if total_agent_calls == 0:
+        parallel_score = 0.0
+    else:
+        parallel_pct = parallel / total_agent_calls * 100
+        if parallel_pct == 0:
+            parallel_score = 5.0  # Using agents but not parallelising
+        elif parallel_pct < 20:
+            parallel_score = 15.0
+        else:
+            parallel_score = 25.0
+
+    # --- Skill adoption (0-25) ---
+    unique_skills = len(skills)
+    if unique_skills == 0:
+        skill_score = 0.0
+    elif unique_skills <= 2:
+        skill_score = 10.0
+    elif unique_skills <= 5:
+        skill_score = 20.0
+    else:
+        skill_score = 25.0
+
+    # --- Task discipline (0-20) ---
+    creates = task_tools.get("TaskCreate", 0)
+    updates = task_tools.get("TaskUpdate", 0)
+    if creates == 0 and updates == 0:
+        task_score = 0.0
+    elif creates > 0 and updates > 0:
+        # Using both create and update shows discipline
+        task_score = 20.0
+    elif creates > 0:
+        task_score = 10.0  # Creating but not tracking
+    else:
+        task_score = 5.0
+
+    score = _clamp(agentic_score + parallel_score + skill_score + task_score)
+
+    # Build explanation
+    parts = []
+    if total_agent_calls > 0:
+        parts.append(f"{total_agent_calls} agent calls ({agent_pct:.0f}% of tools)")
+    if parallel > 0:
+        parts.append(f"{parallel} parallel")
+    if total_skill_calls > 0:
+        parts.append(f"{unique_skills} skills ({total_skill_calls} uses)")
+    if total_task_calls > 0:
+        parts.append(f"{total_task_calls} task ops")
+    explanation = ", ".join(parts) if parts else "No advanced feature usage detected."
+
+    recs = []
+    if total_agent_calls == 0:
+        recs.append(
+            "Not using Agent tool. Spawn subagents for parallel research, "
+            "code review, and independent explorations."
+        )
+    elif parallel == 0:
+        recs.append(
+            "No background agents. Use run_in_background=true for independent "
+            "research tasks to parallelise your workflow."
+        )
+    if unique_skills == 0:
+        recs.append(
+            "No skills used. Skills like /commit, /review, /test automate "
+            "common workflows with best-practice patterns."
+        )
+    if creates == 0 and updates == 0:
+        recs.append(
+            "Not using task tools. TaskCreate/TaskUpdate help track multi-step "
+            "work and maintain progress across long sessions."
+        )
+
+    return DimensionScore(
+        name="Advanced Usage",
+        score=round(score, 1),
+        weight=weight,
+        grade=_grade(score),
+        explanation=explanation,
+        recommendations=recs,
+    )
+
+
 def _data_driven_recommendations(data: ScoringData) -> list[str]:
     """Generate recommendations by comparing YOUR sessions against each other.
 
@@ -873,6 +1006,7 @@ def compute_score(data: ScoringData) -> EfficiencyScore:
         _score_session_discipline(data),
         _score_cost_awareness(data),
         _score_iteration_efficiency(data),
+        _score_advanced_usage(data),
     ]
 
     # Weighted composite

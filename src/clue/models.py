@@ -44,6 +44,10 @@ class ConversationTurn:
     git_branch: str | None = None
     claude_version: str | None = None
     stop_reason: str | None = None
+    # Advanced usage metadata from tool_use input blocks
+    tool_input_subagent_type: str | None = None
+    tool_input_run_in_background: bool = False
+    tool_input_skill: str | None = None
 
 
 @dataclass
@@ -146,6 +150,11 @@ class ScoringData:
     # Per-session comparative data
     session_metrics: list[SessionMetrics] = field(default_factory=list)
     stop_reason_counts: dict[str, int] = field(default_factory=dict)
+    # Advanced usage signals
+    agent_type_counts: dict[str, int] = field(default_factory=dict)
+    parallel_invocations: int = 0
+    skills_used: dict[str, int] = field(default_factory=dict)
+    task_tool_counts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass

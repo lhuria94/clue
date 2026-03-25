@@ -22,7 +22,7 @@ from .patterns import FILE_REF_RE as _FILE_REF_RE
 
 DEFAULT_DB_PATH = Path.home() / ".claude" / "usage.db"
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -98,6 +98,18 @@ MIGRATIONS: dict[int, str] = {
 
     UPDATE schema_version SET version = 2;
     """,
+    3: """
+    ALTER TABLE turns ADD COLUMN tool_input_subagent_type TEXT;
+    ALTER TABLE turns ADD COLUMN tool_input_run_in_background INTEGER DEFAULT 0;
+    ALTER TABLE turns ADD COLUMN tool_input_skill TEXT;
+
+    CREATE INDEX IF NOT EXISTS idx_turns_tool_input_subagent_type
+        ON turns(tool_input_subagent_type);
+    CREATE INDEX IF NOT EXISTS idx_turns_tool_input_skill
+        ON turns(tool_input_skill);
+
+    UPDATE schema_version SET version = 3;
+    """,
 }
 
 
@@ -111,8 +123,15 @@ def _get_schema_version(conn: sqlite3.Connection) -> int:
         return 0
 
 
+# Track whether the most recent init_db call ran migrations.
+# Callers (e.g. pipeline) can check this to decide whether a full re-extract
+# is needed after a schema upgrade.
+_last_init_ran_migrations: bool = False
+
+
 def init_db(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     """Create or open the database and run pending migrations."""
+    global _last_init_ran_migrations
     db_path.parent.mkdir(parents=True, exist_ok=True)
     # Set restrictive umask before creating DB to avoid TOCTOU permission window
     old_umask = os.umask(0o077)
@@ -124,9 +143,11 @@ def init_db(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
 
     current = _get_schema_version(conn)
+    _last_init_ran_migrations = False
     for version in sorted(MIGRATIONS.keys()):
         if version > current:
             conn.executescript(MIGRATIONS[version])
+            _last_init_ran_migrations = True
 
     # Restrict DB file to owner-only access
     with contextlib.suppress(OSError):
@@ -215,14 +236,18 @@ def insert_turns(conn: sqlite3.Connection, turns: list[ConversationTurn]) -> int
             t.git_branch,
             t.claude_version,
             t.stop_reason,
+            t.tool_input_subagent_type,
+            1 if t.tool_input_run_in_background else 0,
+            t.tool_input_skill,
         )
         for t in turns
     ]
     conn.executemany(
         "INSERT INTO turns (session_id, project, role, timestamp, model, "
         "input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, "
-        "tool_name, text_length, is_subagent, cwd, git_branch, claude_version, stop_reason) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "tool_name, text_length, is_subagent, cwd, git_branch, claude_version, stop_reason, "
+        "tool_input_subagent_type, tool_input_run_in_background, tool_input_skill) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         rows,
     )
     conn.commit()
@@ -523,6 +548,55 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
     )
     stop_reason_counts = {r[0]: r[1] for r in cur.fetchall()}
 
+    # --- Advanced usage signals ---
+    clause, params = _where("turns", project)
+    # Agent subagent type distribution
+    cur.execute(
+        f"""
+        SELECT tool_input_subagent_type, COUNT(*)
+        FROM turns
+        WHERE tool_input_subagent_type IS NOT NULL AND {clause}
+        GROUP BY tool_input_subagent_type
+    """,
+        params,
+    )
+    agent_type_counts = {r[0]: r[1] for r in cur.fetchall()}
+
+    # Parallel invocations (Agent with run_in_background)
+    cur.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM turns
+        WHERE tool_input_run_in_background = 1 AND {clause}
+    """,
+        params,
+    )
+    parallel_invocations = cur.fetchone()[0] or 0
+
+    # Skills used
+    cur.execute(
+        f"""
+        SELECT tool_input_skill, COUNT(*)
+        FROM turns
+        WHERE tool_input_skill IS NOT NULL AND {clause}
+        GROUP BY tool_input_skill
+    """,
+        params,
+    )
+    skills_used = {r[0]: r[1] for r in cur.fetchall()}
+
+    # Task tool usage (TaskCreate, TaskUpdate, TaskList, TaskGet, TaskStop)
+    cur.execute(
+        f"""
+        SELECT tool_name, COUNT(*)
+        FROM turns
+        WHERE tool_name LIKE 'Task%' AND {clause}
+        GROUP BY tool_name
+    """,
+        params,
+    )
+    task_tool_counts = {r[0]: r[1] for r in cur.fetchall()}
+
     return ScoringData(
         prompt_lengths=prompt_lengths,
         total_input_tokens=total_input,
@@ -539,6 +613,10 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
         unique_tools_per_session=unique_tools_per_session,
         session_metrics=session_metrics,
         stop_reason_counts=stop_reason_counts,
+        agent_type_counts=agent_type_counts,
+        parallel_invocations=parallel_invocations,
+        skills_used=skills_used,
+        task_tool_counts=task_tool_counts,
     )
 
 

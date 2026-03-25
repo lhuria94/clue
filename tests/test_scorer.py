@@ -24,6 +24,7 @@ from clue.scorer import (
     _analyse_prompt_texts,
     _data_driven_recommendations,
     _grade,
+    _score_advanced_usage,
     compute_project_scores,
     compute_score,
     compute_trend,
@@ -129,7 +130,7 @@ class TestComputeScore:
 
         assert 0 <= score.overall <= 100
         assert score.grade in ("A+", "A", "B", "C", "D", "F")
-        assert len(score.dimensions) == 7
+        assert len(score.dimensions) == 8
 
         names = {d.name for d in score.dimensions}
         assert "Prompt Quality" in names
@@ -139,6 +140,7 @@ class TestComputeScore:
         assert "Session Discipline" in names
         assert "Cost Awareness" in names
         assert "Iteration Efficiency" in names
+        assert "Advanced Usage" in names
 
     def test_dimension_weights_sum_to_one(self, db_conn, sample_prompts, sample_turns):
         insert_prompts(db_conn, sample_prompts)
@@ -557,3 +559,114 @@ class TestDataDrivenRecommendations:
         recs = _data_driven_recommendations(data)
         # Should be empty or very few — no meaningful differences exist
         assert len(recs) <= 2
+
+
+class TestScoreAdvancedUsage:
+    """Tests for the Advanced Usage informational dimension."""
+
+    def test_no_tool_data(self):
+        data = ScoringData()
+        dim = _score_advanced_usage(data)
+        assert dim.name == "Advanced Usage"
+        assert dim.weight == 0.0
+        assert dim.score == 0
+        assert dim.grade == "N/A"
+
+    def test_no_advanced_features(self):
+        """Tools used but no Agent/Skill/Task."""
+        data = ScoringData(
+            tool_counts={"Read": 20, "Edit": 10, "Bash": 5},
+        )
+        dim = _score_advanced_usage(data)
+        assert dim.score == 0
+        assert any("Agent" in r for r in dim.recommendations)
+        assert any("skill" in r.lower() for r in dim.recommendations)
+
+    def test_agent_usage_scores(self):
+        """Using Agent tool should give a score."""
+        data = ScoringData(
+            tool_counts={"Read": 20, "Edit": 10, "Agent": 3},
+            agent_type_counts={"researcher": 2, "debugger": 1},
+        )
+        dim = _score_advanced_usage(data)
+        assert dim.score > 0
+        assert "agent call" in dim.explanation.lower()
+
+    def test_parallel_execution(self):
+        """Background agents should boost score."""
+        data = ScoringData(
+            tool_counts={"Read": 20, "Agent": 5},
+            agent_type_counts={"researcher": 3, "reviewer": 2},
+            parallel_invocations=3,
+        )
+        dim = _score_advanced_usage(data)
+        assert dim.score > 20
+        assert "parallel" in dim.explanation.lower()
+
+    def test_skill_adoption(self):
+        """Skill usage should contribute to score."""
+        data = ScoringData(
+            tool_counts={"Read": 10, "Skill": 5},
+            skills_used={"commit": 2, "review": 2, "test": 1},
+        )
+        dim = _score_advanced_usage(data)
+        assert dim.score > 0
+        assert "skills" in dim.explanation.lower()
+
+    def test_task_discipline(self):
+        """TaskCreate + TaskUpdate usage."""
+        data = ScoringData(
+            tool_counts={"Read": 10, "TaskCreate": 3, "TaskUpdate": 5},
+            task_tool_counts={"TaskCreate": 3, "TaskUpdate": 5},
+        )
+        dim = _score_advanced_usage(data)
+        assert dim.score > 0
+        assert "task" in dim.explanation.lower()
+
+    def test_full_advanced_usage(self):
+        """Using all advanced features should score high."""
+        data = ScoringData(
+            tool_counts={
+                "Read": 20, "Edit": 10, "Agent": 8,
+                "Skill": 4, "TaskCreate": 2, "TaskUpdate": 6,
+            },
+            agent_type_counts={"researcher": 3, "reviewer": 2, "debugger": 3},
+            parallel_invocations=4,
+            skills_used={"commit": 2, "review": 1, "test": 1},
+            task_tool_counts={"TaskCreate": 2, "TaskUpdate": 6},
+        )
+        dim = _score_advanced_usage(data)
+        assert dim.score >= 80
+        assert dim.weight == 0.0  # Still informational
+
+    def test_weight_zero_does_not_affect_composite(self):
+        """Advanced Usage weight=0 should not change overall score."""
+        base_data = ScoringData(
+            prompt_lengths=[120] * 10,
+            prompt_texts=["fix the bug in src/auth.py"] * 10,
+            tool_counts={"Read": 5, "Edit": 4},
+            prompts_per_session=[10],
+            turns_per_session=[20],
+            unique_tools_per_session=[2],
+        )
+        score_base = compute_score(base_data)
+
+        advanced_data = ScoringData(
+            prompt_lengths=[120] * 10,
+            prompt_texts=["fix the bug in src/auth.py"] * 10,
+            tool_counts={"Read": 5, "Edit": 4, "Agent": 10},
+            prompts_per_session=[10],
+            turns_per_session=[20],
+            unique_tools_per_session=[2],
+            agent_type_counts={"researcher": 10},
+            parallel_invocations=5,
+            skills_used={"commit": 3, "review": 2},
+            task_tool_counts={"TaskCreate": 2, "TaskUpdate": 4},
+        )
+        score_advanced = compute_score(advanced_data)
+
+        # Agent adds to tool_counts which affects Tool Mastery,
+        # but the Advanced Usage dimension itself (weight=0) should not
+        # contribute to the weighted average
+        adv_dim = next(d for d in score_advanced.dimensions if d.name == "Advanced Usage")
+        assert adv_dim.weight == 0.0

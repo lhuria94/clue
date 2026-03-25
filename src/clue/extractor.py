@@ -252,8 +252,8 @@ def _parse_conversation_file(
         # Last entry has cumulative token usage
         last_data, last_msg = group[-1]
 
-        # Collect tool names and text across all content blocks in this API call
-        tool_names: list[str] = []
+        # Collect tool names, inputs, and text across all content blocks
+        tool_entries: list[tuple[str, dict]] = []  # (name, input)
         text_len = 0
         for data, msg in group:
             content = msg.get("content", [])
@@ -263,7 +263,10 @@ def _parse_conversation_file(
                 for block in content:
                     if isinstance(block, dict):
                         if block.get("type") == "tool_use":
-                            tool_names.append(block.get("name", "unknown"))
+                            tool_entries.append((
+                                block.get("name", "unknown"),
+                                block.get("input") or {},
+                            ))
                         elif block.get("type") == "text":
                             text_len += len(block.get("text", ""))
 
@@ -300,13 +303,25 @@ def _parse_conversation_file(
             stop_reason=stop_reason,
         )
 
-        if tool_names:
+        if tool_entries:
             # Attribute token usage to the first tool turn only
-            for i, tool in enumerate(tool_names):
+            for i, (tool, tool_input) in enumerate(tool_entries):
+                # Extract advanced usage metadata from tool input
+                subagent_type = None
+                run_in_bg = False
+                skill_name = None
+                if tool == "Agent":
+                    subagent_type = tool_input.get("subagent_type")
+                    run_in_bg = bool(tool_input.get("run_in_background"))
+                elif tool == "Skill":
+                    skill_name = tool_input.get("skill")
                 turns.append(ConversationTurn(
                     **base_kwargs,
                     usage=usage if i == 0 else zero_usage,
                     tool_name=tool,
+                    tool_input_subagent_type=subagent_type,
+                    tool_input_run_in_background=run_in_bg,
+                    tool_input_skill=skill_name,
                 ))
         else:
             turns.append(ConversationTurn(**base_kwargs, usage=usage))
