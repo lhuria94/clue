@@ -149,9 +149,12 @@ def init_db(
             conn.executescript(MIGRATIONS[version])
             ran_migrations = True
 
-    # Restrict DB file to owner-only access
-    with contextlib.suppress(OSError):
-        os.chmod(db_path, 0o600)
+    # Restrict DB file and WAL journal files to owner-only access
+    for suffix in ("", "-wal", "-shm"):
+        wal_path = db_path.parent / (db_path.name + suffix)
+        with contextlib.suppress(OSError):
+            if wal_path.exists():
+                os.chmod(wal_path, 0o600)
 
     return conn, ran_migrations
 
@@ -300,15 +303,10 @@ def insert_sessions(conn: sqlite3.Connection, sessions: list[Session]) -> int:
 # --- Query helpers ---
 
 
-_ALLOWED_TABLES = {"prompts", "turns", "sessions"}
-
-
-def _where(table: str, project: str | None) -> tuple[str, tuple]:
+def _where(project: str | None) -> tuple[str, tuple]:
     """Build a parameterised WHERE clause scoped to a project."""
-    if table not in _ALLOWED_TABLES:
-        raise ValueError(f"Invalid table: {table!r}")
     if project:
-        return f"{table}.project = ?", (project,)
+        return "project = ?", (project,)
     return "1=1", ()
 
 
@@ -317,12 +315,12 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
     cur = conn.cursor()
 
     # Prompt lengths
-    clause, params = _where("prompts", project)
+    clause, params = _where(project)
     cur.execute(f"SELECT char_length FROM prompts WHERE {clause}", params)
     prompt_lengths = [r[0] for r in cur.fetchall()]
 
     # Token totals + session count
-    clause, params = _where("turns", project)
+    clause, params = _where(project)
     cur.execute(
         f"""
         SELECT SUM(input_tokens), SUM(output_tokens),
@@ -360,7 +358,7 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
     tool_counts = {r[0]: r[1] for r in cur.fetchall()}
 
     # Prompts per session
-    clause, params = _where("prompts", project)
+    clause, params = _where(project)
     cur.execute(
         f"""
         SELECT session_id, COUNT(*) as prompts
@@ -372,7 +370,7 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
     prompts_per_session = [r[1] for r in cur.fetchall()]
 
     # Model usage
-    clause, params = _where("turns", project)
+    clause, params = _where(project)
     cur.execute(
         f"""
         SELECT model, COUNT(*) as calls, SUM(output_tokens) as output_t
@@ -388,12 +386,12 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
         model_output_tokens[r[0]] = r[2] or 0
 
     # Prompt texts for semantic analysis
-    clause, params = _where("prompts", project)
+    clause, params = _where(project)
     cur.execute(f"SELECT text FROM prompts WHERE {clause}", params)
     prompt_texts = [r[0] for r in cur.fetchall()]
 
     # Turns per session (total turns including user + assistant)
-    clause, params = _where("turns", project)
+    clause, params = _where(project)
     cur.execute(
         f"""
         SELECT session_id, COUNT(*) as turn_count
@@ -417,7 +415,7 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
 
     # --- Per-session comparative metrics ---
     # Session-level: tools, tokens, corrections, read-before-edit
-    clause, params = _where("turns", project)
+    clause, params = _where(project)
     cur.execute(
         f"""
         SELECT session_id, project,
@@ -452,7 +450,7 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
         )
 
     # Session-level prompt data: texts per session
-    clause, params = _where("prompts", project)
+    clause, params = _where(project)
     cur.execute(
         f"""
         SELECT session_id, text, char_length
@@ -466,13 +464,13 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
         session_prompts.setdefault(r[0], []).append((r[1], r[2]))
 
     # Check read-before-edit per session (ordered tool sequence)
-    clause, params = _where("turns", project)
+    clause, params = _where(project)
     cur.execute(
         f"""
         SELECT session_id, tool_name
         FROM turns
         WHERE tool_name IN ('Read', 'Edit', 'Write') AND {clause}
-        ORDER BY session_id, timestamp
+        ORDER BY session_id, id
     """,
         params,
     )
@@ -535,7 +533,7 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
         ))
 
     # Stop reason counts
-    clause, params = _where("turns", project)
+    clause, params = _where(project)
     cur.execute(
         f"""
         SELECT stop_reason, COUNT(*)
@@ -547,7 +545,7 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
     stop_reason_counts = {r[0]: r[1] for r in cur.fetchall()}
 
     # --- Advanced usage signals ---
-    clause, params = _where("turns", project)
+    clause, params = _where(project)
     # Agent subagent type distribution
     cur.execute(
         f"""

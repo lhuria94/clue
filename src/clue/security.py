@@ -6,6 +6,7 @@ security anti-patterns. Called by export.generate_dashboard_data.
 
 from __future__ import annotations
 
+import html as _html
 import json
 import sqlite3
 from pathlib import Path
@@ -107,9 +108,9 @@ def analyse_single_settings_file(
             if not isinstance(config, dict):
                 continue
             _add("mcp_servers", "medium",
-                 f"MCP server '{name}' configured — external tool providers "
+                 f"MCP server '{_html.escape(name)}' configured — external tool providers "
                  "expand attack surface. Ensure this is a trusted server.",
-                 f"mcpServers.{name}")
+                 f"mcpServers.{_html.escape(name)}")
 
     return findings
 
@@ -265,7 +266,7 @@ def scan_responses_for_secrets(claude_dir: str | None) -> list[dict]:
                 "category": "secrets_in_responses",
                 "severity": "high",
                 "detail": (
-                    f"Session {session_id[:12]}… in {project_dir} — "
+                    f"Session {_html.escape(session_id[:12])}… in {_html.escape(project_dir)} — "
                     "AI response contains potential secret/credential"
                 ),
                 "date": date,
@@ -432,7 +433,7 @@ def build_security_analysis(
     ]
 
     # Settings analysis — check ~/.claude/settings.json for broad permissions
-    settings_findings = analyse_claude_settings()
+    settings_findings = analyse_claude_settings(claude_dir)
     for sf in settings_findings:
         _add(sf["category"], sf["severity"], sf["detail"], None)
 
@@ -447,24 +448,29 @@ def build_security_analysis(
         _add(rf["category"], rf["severity"], rf["detail"], rf.get("date"))
 
     # Compute risk score (0 = clean, higher = more risk)
+    # Score per category presence (not per finding count) for proportionality
+    def _present(cat: str) -> bool:
+        return category_counts.get(cat, 0) > 0
+
     risk_score = (
-        category_counts.get("prompt_injection", 0) * 50
-        + category_counts.get("data_exfiltration", 0) * 50
-        + category_counts.get("wildcard_permissions", 0) * 50
-        + category_counts.get("sandbox_bypass", 0) * 50
-        + category_counts.get("broad_bash_permissions", 0) * 30
-        + category_counts.get("broad_write_permissions", 0) * 20
-        + category_counts.get("secrets_in_prompts", 0) * 20
-        + category_counts.get("secrets_in_responses", 0) * 20
-        + category_counts.get("dangerous_commands", 0) * 15
-        + category_counts.get("hook_bypass", 0) * 10
-        + category_counts.get("broad_edit_permissions", 0) * 10
-        + category_counts.get("broad_agent_permissions", 0) * 5
-        + category_counts.get("force_push", 0) * 5
-        + category_counts.get("sensitive_file_refs", 0) * 5
-        + category_counts.get("mcp_servers", 0) * 5
+        _present("prompt_injection") * 30
+        + _present("data_exfiltration") * 30
+        + _present("wildcard_permissions") * 25
+        + _present("sandbox_bypass") * 25
+        + _present("broad_bash_permissions") * 15
+        + _present("broad_write_permissions") * 10
+        + _present("secrets_in_prompts") * 10
+        + _present("secrets_in_responses") * 10
+        + _present("dangerous_commands") * 10
+        + _present("hook_bypass") * 8
+        + _present("broad_edit_permissions") * 5
+        + _present("broad_agent_permissions") * 5
+        + _present("force_push") * 5
+        + _present("sensitive_file_refs") * 5
+        + _present("mcp_servers") * 3
+        + _present("high_agent_autonomy") * 3
+        + _present("broad_bash_access") * 3
     )
-    # Cap at 100
     risk_score = min(risk_score, 100)
 
     return {

@@ -182,7 +182,7 @@ class TestSecurityExport:
 
     def test_clean_prompts_zero_risk(self, mock_claude_dir, tmp_path, monkeypatch):
         """Normal prompts should produce zero risk score."""
-        monkeypatch.setattr("clue.security.analyse_claude_settings", lambda: [])
+        monkeypatch.setattr("clue.security.analyse_claude_settings", lambda *a, **kw: [])
         db_path = tmp_path / "sec_clean.db"
         conn, _ = init_db(db_path)
         prompts = extract_prompts(mock_claude_dir)

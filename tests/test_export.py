@@ -156,7 +156,7 @@ class TestGenerateDashboardData:
         if data["prompt_pattern_stats"]:
             ps = data["prompt_pattern_stats"][0]
             assert isinstance(ps["pattern"], str)
-            assert ps["count"] > 0
+            assert ps["prompt_count"] > 0
             assert ps["avg_session_tokens"] >= 0
 
     def test_git_correlation_disabled_by_default(self, db_conn, sample_prompts, sample_turns):

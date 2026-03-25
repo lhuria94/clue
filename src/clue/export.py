@@ -514,16 +514,17 @@ def generate_dashboard_data(
 
     prompt_pattern_stats = []
     for pattern, entries in pattern_buckets.items():
-        prompt_count = len(entries)
-        if prompt_count > 0:
-            # Deduplicate: average session tokens across unique sessions, not per prompt
-            unique_sessions = {sid: tok for sid, tok in entries}
-            avg_tokens = sum(unique_sessions.values()) / len(unique_sessions)
-            prompt_pattern_stats.append({
-                "pattern": pattern,
-                "count": prompt_count,
-                "avg_session_tokens": round(avg_tokens, 0),
-            })
+        if not entries:
+            continue
+        # Use session-level counts for both metrics so denominators match
+        unique_sessions = {sid: tok for sid, tok in entries}
+        avg_tokens = sum(unique_sessions.values()) / len(unique_sessions)
+        prompt_pattern_stats.append({
+            "pattern": pattern,
+            "session_count": len(unique_sessions),
+            "prompt_count": len(entries),
+            "avg_session_tokens": round(avg_tokens, 0),
+        })
 
     # --- Session insights: best/worst sessions, per-project coaching ---
     session_insights = _compute_session_insights(scoring_data, per_project_data, projects)

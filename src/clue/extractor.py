@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CLAUDE_DIR = Path.home() / ".claude"
 
+_WALK_MAX_DEPTH = 15  # Max directory depth for path resolution walk
+
 
 def _ts_to_dt(ts: int | float) -> datetime:
     """Convert millisecond epoch to datetime."""
@@ -71,20 +73,32 @@ def _project_from_dir_name(dir_name: str) -> str:
     if not parts:
         return dir_name
 
-    def _walk(base: Path, idx: int) -> str | None:
+    def _walk(base: Path, idx: int, depth: int = 0) -> str | None:
         if idx >= len(parts):
             return base.name
+        if depth >= _WALK_MAX_DEPTH:
+            return None
         remaining = len(parts) - idx
         for length in range(remaining, 0, -1):
             segment = "-".join(parts[idx : idx + length])
-            if (base / segment).is_dir():
-                result = _walk(base / segment, idx + length)
+            candidate = base / segment
+            try:
+                resolved = candidate.resolve(strict=True)
+            except OSError:
+                resolved = None
+            if resolved and resolved.is_dir():
+                result = _walk(resolved, idx + length, depth + 1)
                 if result is not None:
                     return result
             if length >= 2:
                 segment_dot = ".".join(parts[idx : idx + length])
-                if (base / segment_dot).is_dir():
-                    result = _walk(base / segment_dot, idx + length)
+                candidate_dot = base / segment_dot
+                try:
+                    resolved_dot = candidate_dot.resolve(strict=True)
+                except OSError:
+                    resolved_dot = None
+                if resolved_dot and resolved_dot.is_dir():
+                    result = _walk(resolved_dot, idx + length, depth + 1)
                     if result is not None:
                         return result
         return None
@@ -304,7 +318,9 @@ def _parse_conversation_file(
         )
 
         if tool_entries:
-            # Attribute token usage to the first tool turn only
+            # Attribute token usage to the first tool turn only.
+            # NOTE: per-tool token aggregations (SUM grouped by tool_name) are
+            # therefore invalid — only per-session totals are accurate.
             for i, (tool, tool_input) in enumerate(tool_entries):
                 # Extract advanced usage metadata from tool input
                 subagent_type = None

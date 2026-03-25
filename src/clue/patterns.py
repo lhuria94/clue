@@ -40,9 +40,10 @@ SECRET_RE = re.compile(
     r"(?:"
     r"(?:api[_-]?key|api[_-]?secret|access[_-]?token|auth[_-]?token|bearer|secret[_-]?key"
     r"|private[_-]?key|password|passwd|client[_-]?secret)"
-    r"\s*[:=]\s*['\"]?[A-Za-z0-9/+=_-]{8,}"
-    r"|['\"](?:sk|pk|rk|ak|AKIA|ghp|gho|ghs|ghr|github_pat|xox[bpsar]|glpat)"
-    r"[-_A-Za-z0-9]{10,}['\"]"
+    r"\s*[:=]\s*['\"]?[A-Za-z0-9/+=_-]{16,}"
+    r"|['\"]?(?:sk-ant|sk-|pk_|rk_|AKIA|ASIA|ghp_|gho_|ghs_|ghr_|github_pat_"
+    r"|xox[bpsar]-|glpat-|npm_|eyJ)"
+    r"[-_A-Za-z0-9.]{20,}['\"]?"
     r")",
     re.I,
 )
@@ -98,11 +99,11 @@ PROMPT_INJECTION_RE = re.compile(
 # Data exfiltration patterns — attempts to send data to external services
 EXFILTRATION_RE = re.compile(
     r"(?:"
-    r"curl\s+.*?-d\s+.*?(?:env|secret|key|token|password|credential)"
-    r"|curl\s+.*?--data.*?(?:env|secret|key|token|password|credential)"
-    r"|(?:wget|curl)\s+.*?(?:webhook|ngrok|requestbin|pipedream|hookbin)"
-    r"|base64\s+.*?(?:\.env|credentials|\.key|\.pem)"
-    r"|cat\s+.*?(?:\.env|credentials|\.key|\.pem).*?\|\s*(?:curl|nc|ncat)"
+    r"curl\b[^|;&\n]{0,200}-d\b[^|;&\n]{0,200}(?:env|secret|key|token|password|credential)"
+    r"|curl\b[^|;&\n]{0,200}--data\b[^|;&\n]{0,200}(?:env|secret|key|token|password|credential)"
+    r"|(?:wget|curl)\b[^|;&\n]{0,200}(?:webhook|ngrok|requestbin|pipedream|hookbin)"
+    r"|base64\b[^|;&\n]{0,200}(?:\.env|credentials|\.key|\.pem)"
+    r"|cat\b[^|;&\n]{0,200}(?:\.env|credentials|\.key|\.pem)[^|;&\n]{0,200}\|\s*(?:curl|nc|ncat)"
     r"|nc\s+-\w+\s+\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}"  # netcat to IP
     r")",
     re.I,

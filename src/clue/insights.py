@@ -135,10 +135,18 @@ def compute_weekly_digest(
     today = datetime.now().strftime("%Y-%m-%d")
 
     cur.execute("SELECT COUNT(*) FROM prompts WHERE date > date(?, '-7 days')", (today,))
-    if cur.fetchone()[0] == 0:
-        cur.execute("SELECT COUNT(*) FROM prompts")
-        if cur.fetchone()[0] == 0:
-            return {"has_data": False}
+    has_recent_prompts = cur.fetchone()[0] > 0
+    if not has_recent_prompts:
+        # Fallback: check turns table for users whose data comes from conversations
+        cur.execute(
+            "SELECT COUNT(*) FROM turns WHERE SUBSTR(timestamp, 1, 10) > date(?, '-7 days')",
+            (today,),
+        )
+        has_recent_turns = cur.fetchone()[0] > 0
+        if not has_recent_turns:
+            cur.execute("SELECT COUNT(*) FROM prompts")
+            if cur.fetchone()[0] == 0:
+                return {"has_data": False}
 
     # This week: last 7 days from today
     cur.execute(

@@ -162,15 +162,13 @@ def _score_prompt_quality(data: ScoringData) -> DimensionScore:
     confirmation_penalty = min(signals["confirmation_pct"] * 0.3, 10)
 
     score = _clamp(
-        50
-        - short_penalty
-        + good_bonus
+        good_bonus
         + detail_bonus
         + avg_len_score
         + file_ref_bonus
         + slash_bonus
+        - short_penalty
         - confirmation_penalty
-        - 50
     )
 
     recs = []
