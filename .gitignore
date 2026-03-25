@@ -29,6 +29,9 @@ test-results/
 .DS_Store
 Thumbs.db
 
+# Streamlit
+.streamlit/secrets.toml
+
 # Project-specific
 *.db
 *.jsonl
