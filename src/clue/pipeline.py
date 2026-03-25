@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import db as _db
 from .db import (
     clear_db,
     delete_turns_by_sessions,
@@ -17,11 +16,11 @@ from .db import (
     set_watermark,
 )
 from .extractor import (
-    _count_lines,
-    _file_mtime,
     build_sessions,
+    count_lines,
     extract_conversations,
     extract_prompts,
+    file_mtime,
     find_changed_conversation_files,
 )
 
@@ -32,10 +31,10 @@ def run_extract(claude_dir: Path, db_path: Path, incremental: bool = False) -> d
     If incremental is requested but schema migrations just ran, forces a
     full re-extract so new columns get populated from existing data.
     """
-    conn = init_db(db_path)
+    conn, ran_migrations = init_db(db_path)
 
     # Schema upgrade means extraction logic changed — force full re-extract
-    if incremental and _db._last_init_ran_migrations:
+    if incremental and ran_migrations:
         incremental = False
 
     if not incremental:
@@ -52,7 +51,7 @@ def run_extract(claude_dir: Path, db_path: Path, incremental: bool = False) -> d
 
     if history_file.exists():
         set_watermark(
-            conn, str(history_file), _file_mtime(history_file), _count_lines(history_file)
+            conn, str(history_file), file_mtime(history_file), count_lines(history_file)
         )
 
     # Conversations — incremental via file mtime watermarks

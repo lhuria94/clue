@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import html
-import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import plotly.graph_objects as go
@@ -153,97 +152,24 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── Colour palette (matches enterprise design) ──────────────────
-COLORS = {
-    "accent": "#6366f1",
-    "accent_light": "#818cf8",
-    "green": "#34d399",
-    "amber": "#fbbf24",
-    "rose": "#fb7185",
-    "blue": "#60a5fa",
-    "cyan": "#22d3ee",
-    "orange": "#fb923c",
-    "purple": "#a78bfa",
-    "pink": "#f472b6",
-}
-
-CHART_COLORS = [
-    COLORS["accent"], COLORS["blue"], COLORS["green"], COLORS["amber"],
-    COLORS["rose"], COLORS["cyan"], COLORS["orange"], COLORS["purple"],
-    COLORS["pink"], COLORS["accent_light"],
-]
-
-PLOTLY_LAYOUT = dict(
-    margin=dict(l=40, r=20, t=30, b=40),
-    legend=dict(
-        orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
-    ),
+# ── Shared helpers + data loading ─────────────────────────────────
+from clue.dashboard._data import (  # noqa: E402
+    CLAUDE_DIR,
+    DB_PATH,
+    filter_by_range,
+    get_data,
+    load_data,
 )
-
-# Hide Plotly toolbar to avoid overlap with legend
-PLOTLY_CONFIG = dict(displayModeBar=False)
-
-
-# ── Data loading — live from ~/.claude ────────────────────────────
-from clue.db import init_db  # noqa: E402
-from clue.export import generate_dashboard_data  # noqa: E402
+from clue.dashboard._helpers import (  # noqa: E402
+    CHART_COLORS,
+    COLORS,
+    PLOTLY_CONFIG,
+    PLOTLY_LAYOUT,
+    fmt_tokens,
+    grade_class,
+    score_color,
+)
 from clue.pipeline import run_extract  # noqa: E402
-
-DB_PATH = os.environ.get("CLUE_DB_PATH", str(Path.home() / ".claude" / "usage.db"))
-CLAUDE_DIR = os.environ.get("CLUE_CLAUDE_DIR", str(Path.home() / ".claude"))
-SCRUB_MODE = os.environ.get("CLUE_SCRUB", "").lower() in ("1", "true", "yes")
-
-
-@st.cache_data(ttl=120, show_spinner="Loading data...")
-def load_data(_db_path: str, scrub: bool = False) -> dict:
-    """Query SQLite and return dashboard data dict."""
-    conn = init_db(Path(_db_path))
-    data = generate_dashboard_data(conn, git_correlation=True, scrub=scrub, claude_dir=CLAUDE_DIR)
-    conn.close()
-    return data
-
-
-def get_data() -> dict:
-    return load_data(DB_PATH, scrub=SCRUB_MODE)
-
-
-def filter_by_range(items: list[dict], days: int | None) -> list[dict]:
-    """Filter daily-granularity data by date range."""
-    if days is None:
-        return items
-    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-    return [item for item in items if item.get("d", "") >= cutoff]
-
-
-def score_color(score: float) -> str:
-    if score >= 80:
-        return COLORS["green"]
-    if score >= 60:
-        return COLORS["amber"]
-    return COLORS["rose"]
-
-
-def grade_class(grade: str) -> str:
-    if grade.startswith("A"):
-        return "grade-A"
-    if grade.startswith("B"):
-        return "grade-B"
-    if grade.startswith("C"):
-        return "grade-C"
-    if grade.startswith("D"):
-        return "grade-D"
-    return "grade-F"
-
-
-def fmt_tokens(n: int) -> str:
-    if n >= 1_000_000_000:
-        return f"{n / 1_000_000_000:.1f}B"
-    if n >= 1_000_000:
-        return f"{n / 1_000_000:.1f}M"
-    if n >= 1_000:
-        return f"{n / 1_000:.1f}K"
-    return str(n)
-
 
 # ── Load data ────────────────────────────────────────────────────
 DATA = get_data()

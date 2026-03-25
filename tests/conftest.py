@@ -21,7 +21,7 @@ def tmp_dir(tmp_path):
 def db_conn(tmp_path):
     """Fresh SQLite connection with schema applied."""
     db_path = tmp_path / "test.db"
-    conn = init_db(db_path)
+    conn, _ = init_db(db_path)
     yield conn
     conn.close()
 

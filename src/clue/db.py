@@ -9,6 +9,7 @@ import sqlite3
 from pathlib import Path
 
 from .models import (
+    MODEL_PRICING,
     ConversationTurn,
     Prompt,
     ScoringData,
@@ -123,15 +124,14 @@ def _get_schema_version(conn: sqlite3.Connection) -> int:
         return 0
 
 
-# Track whether the most recent init_db call ran migrations.
-# Callers (e.g. pipeline) can check this to decide whether a full re-extract
-# is needed after a schema upgrade.
-_last_init_ran_migrations: bool = False
+def init_db(
+    db_path: Path = DEFAULT_DB_PATH,
+) -> tuple[sqlite3.Connection, bool]:
+    """Create or open the database and run pending migrations.
 
-
-def init_db(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
-    """Create or open the database and run pending migrations."""
-    global _last_init_ran_migrations
+    Returns (connection, ran_migrations) so callers can decide whether
+    a full re-extract is needed after a schema upgrade.
+    """
     db_path.parent.mkdir(parents=True, exist_ok=True)
     # Set restrictive umask before creating DB to avoid TOCTOU permission window
     old_umask = os.umask(0o077)
@@ -143,17 +143,17 @@ def init_db(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
 
     current = _get_schema_version(conn)
-    _last_init_ran_migrations = False
+    ran_migrations = False
     for version in sorted(MIGRATIONS.keys()):
         if version > current:
             conn.executescript(MIGRATIONS[version])
-            _last_init_ran_migrations = True
+            ran_migrations = True
 
     # Restrict DB file to owner-only access
     with contextlib.suppress(OSError):
         os.chmod(db_path, 0o600)
 
-    return conn
+    return conn, ran_migrations
 
 
 def clear_db(conn: sqlite3.Connection) -> None:
@@ -479,8 +479,6 @@ def query_scoring_data(conn: sqlite3.Connection, project: str | None = None) -> 
     session_tool_seq: dict[str, list[str]] = {}
     for r in cur.fetchall():
         session_tool_seq.setdefault(r[0], []).append(r[1])
-
-    from .models import MODEL_PRICING
 
     session_metrics: list[SessionMetrics] = []
     for sid, turn_row in session_turn_data.items():

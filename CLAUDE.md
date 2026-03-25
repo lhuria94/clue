@@ -24,22 +24,28 @@ Without Taskfile: `.venv/bin/pytest tests/ -v`
 ```
 patterns.py    ← Shared regex patterns (no internal imports)
 models.py      ← Pure domain (dataclasses, no imports from clue)
+git_utils.py   ← Infrastructure: git operations (no internal imports)
 scorer.py      ← Domain logic: 7+1 dimension scoring engine (depends on models + patterns)
 extractor.py   ← Infrastructure: reads ~/.claude/ JSONL files
-db.py          ← Infrastructure: SQLite persistence (uses patterns)
-export.py      ← Application: SQL queries → dashboard data dict + security analysis (uses patterns)
+db.py          ← Infrastructure: SQLite persistence (uses models + patterns)
+security.py    ← Analysis: settings & secrets scanning (depends on patterns)
+insights.py    ← Analysis: cost estimation, session insights (depends on models + patterns)
+export.py      ← Application: SQL queries → dashboard data dict (uses security + insights)
 pipeline.py    ← Extraction orchestration (shared by cli + dashboard)
 cli.py         ← Interface: argparse commands
 dashboard/     ← Interface: Streamlit UI (9 tabs including Advanced + Security)
+  _helpers.py  ← Color palette, formatters, Plotly config
+  _data.py     ← Data loading, filtering, environment config
+  app.py       ← Main Streamlit app with tab rendering
 ```
 
-Dependency direction enforced by import-linter (8 contracts in `pyproject.toml`).
+Dependency direction enforced by import-linter (10 contracts in `pyproject.toml`).
 Key rule: `dashboard` must not import from `cli`. Both use `pipeline` for extraction.
 
 ## Coverage
 
 - Ratchet: 87% (`--cov-fail-under=87`)
-- `dashboard/app.py` and `__main__.py` are excluded from coverage (Streamlit can't be unit-tested)
+- `dashboard/` (app.py, _data.py, _helpers.py) and `__main__.py` are excluded from coverage (Streamlit can't be unit-tested)
 - Coverage can only go up, never down
 
 ## Setup

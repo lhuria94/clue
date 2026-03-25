@@ -50,7 +50,7 @@ def cmd_extract(args: argparse.Namespace) -> None:
 def cmd_export(args: argparse.Namespace) -> None:
     """Export dashboard JSON from SQLite."""
     db_path = Path(args.db)
-    conn = init_db(db_path)
+    conn, _ = init_db(db_path)
     data = generate_dashboard_data(
         conn,
         scrub=getattr(args, "scrub", False),
@@ -154,7 +154,7 @@ def cmd_score(args: argparse.Namespace) -> None:
     from .db import query_all_projects, query_project_stats, query_trend_data
 
     db_path = Path(args.db)
-    conn = init_db(db_path)
+    conn, _ = init_db(db_path)
     scoring_data = query_scoring_data(conn)
     score = compute_score(scoring_data)
     trend_data = query_trend_data(conn)
@@ -315,7 +315,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     db_path = Path(args.db)
     if db_path.exists():
         try:
-            conn = init_db(db_path)
+            conn, _ = init_db(db_path)
             cur = conn.execute("SELECT COUNT(*) FROM prompts")
             prompt_count = cur.fetchone()[0]
             cur = conn.execute("SELECT COUNT(*) FROM turns")
@@ -436,7 +436,7 @@ def cmd_setup(args: argparse.Namespace) -> None:
     print(f"    {prompts} prompts, {resps} replies, {sess} sessions")
 
     # 4. Print initial score
-    conn = init_db(db_path)
+    conn, _ = init_db(db_path)
     scoring_data = query_scoring_data(conn)
     score = compute_score(scoring_data)
     conn.close()
@@ -459,7 +459,7 @@ def cmd_digest(args: argparse.Namespace) -> None:
         print("No data yet. Run: clue extract")
         sys.exit(1)
 
-    conn = init_db(db_path)
+    conn, _ = init_db(db_path)
     data = generate_dashboard_data(conn)
     conn.close()
 

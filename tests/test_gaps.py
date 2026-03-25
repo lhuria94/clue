@@ -176,7 +176,7 @@ class TestIncrementalTurnDeduplication:
 
     def test_no_duplicates_after_reextract(self, mock_claude_dir, tmp_path):
         db_path = tmp_path / "dedup.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
 
         # Full extraction
         prompts = extract_prompts(mock_claude_dir)
@@ -199,7 +199,7 @@ class TestIncrementalTurnDeduplication:
     def test_session_rebuild_preserves_totals(self, mock_claude_dir, tmp_path):
         """Sessions rebuilt after incremental extraction should have correct totals."""
         db_path = tmp_path / "rebuild.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
 
         prompts = extract_prompts(mock_claude_dir)
         turns = extract_conversations(mock_claude_dir)

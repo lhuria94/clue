@@ -20,7 +20,7 @@ class TestFullPipeline:
 
     def test_full_extract_and_export(self, mock_claude_dir, tmp_path):
         db_path = tmp_path / "integration.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
 
         # Extract
         prompts = extract_prompts(mock_claude_dir)
@@ -58,7 +58,7 @@ class TestFullPipeline:
     def test_json_serialisable(self, mock_claude_dir, tmp_path):
         """Verify the export is fully JSON-serialisable."""
         db_path = tmp_path / "serial.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         prompts = extract_prompts(mock_claude_dir)
         turns = extract_conversations(mock_claude_dir)
         sessions = build_sessions(prompts, turns)
@@ -79,7 +79,7 @@ class TestIncrementalExtraction:
 
     def test_watermark_skips_old_prompts(self, mock_claude_dir, tmp_path):
         db_path = tmp_path / "incr.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
 
         # First extract — all prompts
         prompts_1 = extract_prompts(mock_claude_dir)
@@ -99,7 +99,7 @@ class TestIncrementalExtraction:
 class TestMultiProjectPipeline:
     def test_multiple_projects_in_single_export(self, mock_claude_dir, tmp_path):
         db_path = tmp_path / "multi.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         prompts = extract_prompts(mock_claude_dir)
         turns = extract_conversations(mock_claude_dir)
         sessions = build_sessions(prompts, turns)
@@ -118,7 +118,7 @@ class TestAdvancedUsageExport:
 
     def test_advanced_usage_in_export(self, mock_claude_dir, tmp_path):
         db_path = tmp_path / "adv.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         prompts = extract_prompts(mock_claude_dir)
         turns = extract_conversations(mock_claude_dir)
         sessions = build_sessions(prompts, turns)
@@ -138,7 +138,7 @@ class TestAdvancedUsageExport:
 
     def test_advanced_usage_captures_agent_types(self, mock_claude_dir, tmp_path):
         db_path = tmp_path / "adv2.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         turns = extract_conversations(mock_claude_dir)
         insert_turns(conn, turns)
         data = generate_dashboard_data(conn)
@@ -151,7 +151,7 @@ class TestAdvancedUsageExport:
 
     def test_advanced_usage_captures_skills(self, mock_claude_dir, tmp_path):
         db_path = tmp_path / "adv3.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         turns = extract_conversations(mock_claude_dir)
         insert_turns(conn, turns)
         data = generate_dashboard_data(conn)
@@ -167,7 +167,7 @@ class TestSecurityExport:
 
     def test_security_key_exists(self, mock_claude_dir, tmp_path):
         db_path = tmp_path / "sec.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         prompts = extract_prompts(mock_claude_dir)
         insert_prompts(conn, prompts)
         data = generate_dashboard_data(conn)
@@ -182,9 +182,9 @@ class TestSecurityExport:
 
     def test_clean_prompts_zero_risk(self, mock_claude_dir, tmp_path, monkeypatch):
         """Normal prompts should produce zero risk score."""
-        monkeypatch.setattr("clue.export._analyse_claude_settings", lambda: [])
+        monkeypatch.setattr("clue.security.analyse_claude_settings", lambda: [])
         db_path = tmp_path / "sec_clean.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         prompts = extract_prompts(mock_claude_dir)
         insert_prompts(conn, prompts)
         data = generate_dashboard_data(conn)
@@ -199,7 +199,7 @@ class TestSecurityExport:
         from clue.models import Prompt
 
         db_path = tmp_path / "sec_secret.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         dangerous_prompts = [
             Prompt(
                 timestamp=datetime(2025, 3, 21, 10, 0, tzinfo=timezone.utc),
@@ -224,7 +224,7 @@ class TestSecurityExport:
         from clue.models import Prompt
 
         db_path = tmp_path / "sec_hook.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         insert_prompts(conn, [
             Prompt(
                 timestamp=datetime(2025, 3, 21, 10, 0, tzinfo=timezone.utc),
@@ -246,7 +246,7 @@ class TestSecurityExport:
         from clue.models import Prompt
 
         db_path = tmp_path / "sec_danger.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         insert_prompts(conn, [
             Prompt(
                 timestamp=datetime(2025, 3, 21, 10, 0, tzinfo=timezone.utc),
@@ -268,7 +268,7 @@ class TestSecurityExport:
         from clue.models import Prompt
 
         db_path = tmp_path / "sec_env.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         insert_prompts(conn, [
             Prompt(
                 timestamp=datetime(2025, 3, 21, 10, 0, tzinfo=timezone.utc),
@@ -291,7 +291,7 @@ class TestSecurityExport:
         from clue.models import Prompt
 
         db_path = tmp_path / "sec_inject.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         insert_prompts(conn, [
             Prompt(
                 timestamp=datetime(2025, 3, 21, 10, 0, tzinfo=timezone.utc),
@@ -314,7 +314,7 @@ class TestSecurityExport:
         from clue.models import Prompt
 
         db_path = tmp_path / "sec_exfil.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         insert_prompts(conn, [
             Prompt(
                 timestamp=datetime(2025, 3, 21, 10, 0, tzinfo=timezone.utc),
@@ -338,7 +338,7 @@ class TestSecurityExport:
     def test_settings_analysis_included(self, mock_claude_dir, tmp_path):
         """Security export should include settings_findings key."""
         db_path = tmp_path / "sec_settings.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         prompts = extract_prompts(mock_claude_dir)
         insert_prompts(conn, prompts)
         data = generate_dashboard_data(conn)
@@ -369,7 +369,7 @@ class TestSecurityExport:
         }) + "\n")
 
         db_path = tmp_path / "sec_resp.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         data = generate_dashboard_data(conn, claude_dir=str(claude_dir))
         conn.close()
 
@@ -384,7 +384,7 @@ class TestSecurityExport:
         monkeypatch.chdir(tmp_path)
 
         db_path = tmp_path / "sec_md.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         data = generate_dashboard_data(conn, claude_dir=str(tmp_path))
         conn.close()
 
@@ -412,7 +412,7 @@ class TestSecurityExport:
         }) + "\n")
 
         db_path = tmp_path / "sec_clean_resp.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         data = generate_dashboard_data(conn, claude_dir=str(claude_dir))
         conn.close()
 
@@ -447,7 +447,7 @@ class TestSecurityExport:
         conv_file.write_text("\n".join(lines) + "\n")
 
         db_path = tmp_path / "sec_placeholder.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         data = generate_dashboard_data(conn, claude_dir=str(claude_dir))
         conn.close()
 
@@ -460,7 +460,7 @@ class TestDashboardDataConsistency:
     def test_all_export_keys_accessible(self, mock_claude_dir, tmp_path):
         """All keys used in the dashboard must exist in the export."""
         db_path = tmp_path / "dash.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         prompts = extract_prompts(mock_claude_dir)
         turns = extract_conversations(mock_claude_dir)
         sessions = build_sessions(prompts, turns)
@@ -495,7 +495,7 @@ class TestSecurityConstraints:
 
     def test_scrub_mode_no_prompt_text_in_json(self, mock_claude_dir, tmp_path):
         db_path = tmp_path / "scrub.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         prompts = extract_prompts(mock_claude_dir)
         turns = extract_conversations(mock_claude_dir)
         sessions = build_sessions(prompts, turns)
@@ -512,7 +512,7 @@ class TestSecurityConstraints:
 
     def test_export_contains_no_file_paths(self, mock_claude_dir, tmp_path):
         db_path = tmp_path / "paths.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         prompts = extract_prompts(mock_claude_dir)
         turns = extract_conversations(mock_claude_dir)
         sessions = build_sessions(prompts, turns)
@@ -529,7 +529,7 @@ class TestSecurityConstraints:
     def test_scrub_mode_no_project_names_in_json(self, mock_claude_dir, tmp_path):
         """Project names must be stripped from all fields in scrub mode."""
         db_path = tmp_path / "scrub_proj.db"
-        conn = init_db(db_path)
+        conn, _ = init_db(db_path)
         prompts = extract_prompts(mock_claude_dir)
         turns = extract_conversations(mock_claude_dir)
         sessions = build_sessions(prompts, turns)

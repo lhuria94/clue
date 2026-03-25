@@ -95,7 +95,7 @@ def _project_from_dir_name(dir_name: str) -> str:
     return parts[-1]
 
 
-def _file_mtime(path: Path) -> float:
+def file_mtime(path: Path) -> float:
     """Get file modification time, 0.0 if not accessible."""
     try:
         return path.stat().st_mtime
@@ -103,7 +103,7 @@ def _file_mtime(path: Path) -> float:
         return 0.0
 
 
-def _count_lines(path: Path) -> int:
+def count_lines(path: Path) -> int:
     """Count lines in a file without reading entire content into memory."""
     try:
         with open(path, "rb") as f:
@@ -397,11 +397,11 @@ def find_changed_conversation_files(
 
     def _check(path: Path) -> None:
         key = str(path)
-        mtime = _file_mtime(path)
+        mtime = file_mtime(path)
         old_mtime, _ = get_wm(key)
         if mtime > old_mtime:
             changed.add(key)
-            set_wm(key, mtime, _count_lines(path))
+            set_wm(key, mtime, count_lines(path))
 
     for project_dir in projects_dir.iterdir():
         if not project_dir.is_dir():

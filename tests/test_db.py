@@ -35,9 +35,9 @@ class TestInitDb:
 
     def test_idempotent(self, tmp_path):
         db_path = tmp_path / "test.db"
-        conn1 = init_db(db_path)
+        conn1, _ = init_db(db_path)
         conn1.close()
-        conn2 = init_db(db_path)
+        conn2, _ = init_db(db_path)
         cur = conn2.execute("SELECT MAX(version) FROM schema_version")
         assert cur.fetchone()[0] == 3
         conn2.close()

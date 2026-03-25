@@ -44,7 +44,7 @@ addopts = "--cov=clue --cov-report=term-missing --cov-fail-under=87"
 [tool.coverage.run]
 source = ["src/clue"]
 branch = true
-omit = ["src/clue/dashboard/app.py", "src/clue/__main__.py"]
+omit = ["src/clue/dashboard/app.py", "src/clue/dashboard/_data.py", "src/clue/dashboard/_helpers.py", "src/clue/__main__.py"]
 
 [tool.coverage.report]
 show_missing = true
@@ -71,6 +71,7 @@ source_modules = ["clue.patterns"]
 forbidden_modules = [
     "clue.db", "clue.extractor", "clue.scorer", "clue.export",
     "clue.cli", "clue.models", "clue.pipeline", "clue.dashboard",
+    "clue.security", "clue.insights", "clue.git_utils",
 ]
 
 [[tool.importlinter.contracts]]
@@ -79,26 +80,39 @@ type = "forbidden"
 source_modules = ["clue.models"]
 forbidden_modules = [
     "clue.db", "clue.extractor", "clue.scorer", "clue.export",
-    "clue.cli", "clue.patterns",
+    "clue.cli", "clue.patterns", "clue.pipeline", "clue.dashboard",
+    "clue.security", "clue.insights", "clue.git_utils",
 ]
 
 [[tool.importlinter.contracts]]
 name = "scorer depends only on models and patterns"
 type = "forbidden"
 source_modules = ["clue.scorer"]
-forbidden_modules = ["clue.db", "clue.export", "clue.cli", "clue.extractor"]
+forbidden_modules = [
+    "clue.db", "clue.export", "clue.cli", "clue.extractor",
+    "clue.pipeline", "clue.dashboard", "clue.security", "clue.insights",
+    "clue.git_utils",
+]
 
 [[tool.importlinter.contracts]]
 name = "db does not depend on export or cli"
 type = "forbidden"
 source_modules = ["clue.db"]
-forbidden_modules = ["clue.export", "clue.cli", "clue.extractor", "clue.scorer"]
+forbidden_modules = [
+    "clue.export", "clue.cli", "clue.extractor", "clue.scorer",
+    "clue.pipeline", "clue.dashboard", "clue.security", "clue.insights",
+    "clue.git_utils",
+]
 
 [[tool.importlinter.contracts]]
 name = "extractor does not depend on export or cli"
 type = "forbidden"
 source_modules = ["clue.extractor"]
-forbidden_modules = ["clue.export", "clue.cli", "clue.scorer", "clue.patterns"]
+forbidden_modules = [
+    "clue.export", "clue.cli", "clue.scorer", "clue.patterns",
+    "clue.pipeline", "clue.dashboard", "clue.security", "clue.insights",
+    "clue.git_utils",
+]
 
 [[tool.importlinter.contracts]]
 name = "dashboard does not depend on cli"
@@ -110,7 +124,10 @@ forbidden_modules = ["clue.cli"]
 name = "pipeline does not depend on cli or dashboard"
 type = "forbidden"
 source_modules = ["clue.pipeline"]
-forbidden_modules = ["clue.cli", "clue.dashboard", "clue.export", "clue.scorer"]
+forbidden_modules = [
+    "clue.cli", "clue.dashboard", "clue.export", "clue.scorer",
+    "clue.security", "clue.insights",
+]
 
 [[tool.importlinter.contracts]]
 name = "git_utils has no internal imports"
@@ -119,5 +136,25 @@ source_modules = ["clue.git_utils"]
 forbidden_modules = [
     "clue.db", "clue.extractor", "clue.scorer", "clue.export",
     "clue.cli", "clue.models", "clue.pipeline", "clue.dashboard",
-    "clue.patterns",
+    "clue.patterns", "clue.security", "clue.insights",
+]
+
+[[tool.importlinter.contracts]]
+name = "security depends only on patterns"
+type = "forbidden"
+source_modules = ["clue.security"]
+forbidden_modules = [
+    "clue.db", "clue.extractor", "clue.scorer", "clue.export",
+    "clue.cli", "clue.models", "clue.pipeline", "clue.dashboard",
+    "clue.insights", "clue.git_utils",
+]
+
+[[tool.importlinter.contracts]]
+name = "insights depends only on models and patterns"
+type = "forbidden"
+source_modules = ["clue.insights"]
+forbidden_modules = [
+    "clue.db", "clue.extractor", "clue.scorer", "clue.export",
+    "clue.cli", "clue.pipeline", "clue.dashboard", "clue.security",
+    "clue.git_utils",
 ]
